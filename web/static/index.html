@@ -276,11 +276,7 @@ function populateSelect(select, files, previous) {
     opt.textContent = name;
     select.appendChild(opt);
   }
-  if (previous && files.includes(previous)) {
-    select.value = previous;
-    return true;
-  }
-  return false;
+  if (previous && files.includes(previous)) select.value = previous;
 }
 
 function updateImageHint() {
@@ -296,11 +292,18 @@ async function refreshInputs(selectName) {
   updateImageHint();
 }
 
+let lastNewestOutput = null;
+
+// files[] is always newest-first (server-sorted by mtime). Auto-load whenever the
+// newest entry changes, regardless of whether the previously-selected (older) file
+// is still present in the list -- outputs/ only ever grows, so "is it still there"
+// never becomes false on its own.
 async function refreshOutputs() {
   const select = document.getElementById('video-select');
   const files = await api('/api/outputs');
-  const kept = populateSelect(select, files, select.value);
-  if (!kept && files.length) {
+  populateSelect(select, files, select.value);
+  if (files.length && files[0] !== lastNewestOutput) {
+    lastNewestOutput = files[0];
     select.value = files[0];
     loadVideo(files[0]);
   }
@@ -383,6 +386,7 @@ document.getElementById('delete-queue-btn').addEventListener('click', async () =
 });
 
 let lastOutputsMtime = null;
+let lastLoggedJobId = null;
 let lastLoggedMessage = null;
 
 async function poll() {
@@ -408,7 +412,11 @@ async function poll() {
       else if (job.status === 'error') { setPill('error', 'Error'); fill.classList.add('error'); }
       else { setPill('ready', 'Ready'); fill.classList.add('done'); }
 
-      if (job.message !== lastLoggedMessage) {
+      // Compare job id, not just message text: a fast (e.g. mock) job can finish between
+      // two polls, so its final message may be textually identical to the previous job's
+      // final message ("done") -- the id makes sure it still gets logged.
+      if (job.id !== lastLoggedJobId || job.message !== lastLoggedMessage) {
+        lastLoggedJobId = job.id;
         lastLoggedMessage = job.message;
         logLine(job.status === 'error' ? `Error: ${job.message}` : job.message);
       }

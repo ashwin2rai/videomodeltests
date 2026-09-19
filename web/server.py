@@ -62,11 +62,16 @@ def _init_backend():
 
 def _worker_loop():
     global current_job
+    job_id = 0
     while True:
         job = job_queue.get()
-        logger.info("Starting job: %r (queue_length=%d)", job["prompt"], job_queue.qsize())
+        job_id += 1
+        logger.info("Starting job %d: %r (queue_length=%d)", job_id, job["prompt"], job_queue.qsize())
         with state_lock:
-            current_job = {"prompt": job["prompt"], "progress": 0.0, "message": "starting", "status": "running"}
+            current_job = {
+                "id": job_id, "prompt": job["prompt"], "progress": 0.0,
+                "message": "starting", "status": "running",
+            }
 
         def progress_callback(progress, message):
             with state_lock:
