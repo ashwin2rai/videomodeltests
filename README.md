@@ -1,17 +1,17 @@
 # videomodeltests
 
-Minimal CLI for MiniMax H3 (FL2VA) image-to-video + audio generation, targeting a single RTX 5090. See `objective/objective.md` for the full spec and `objective/status.md` for detailed progress notes. This is inference experimentation tooling, not a product.
+Minimal CLI + a lightweight web UI for MiniMax H3 (FL2VA) image-to-video + audio generation, targeting a single RTX 5090. See `objective/objective.md` for the CLI's full spec, `objective/ui.md` for the web UI's, and `objective/status.md` for detailed progress notes. This is inference experimentation tooling, not a product.
 
 ## Status
 
-Phases 1-3 of the objective's plan are done: local skeleton, full real backend, and a first successful real generation on the target hardware (playable MP4, video + audio, within VRAM). Phase 4 (performance) and Phase 5 (verifying more checkpoints) are in progress — see `objective/status.md`.
+Phases 1-3 of the objective's plan are done: local skeleton, full real backend, and a first successful real generation on the target hardware (playable MP4, video + audio, within VRAM). Phase 4 (performance) and Phase 5 (verifying more checkpoints) are in progress — see `objective/status.md`. A web UI for queueing generations from a browser has also been added — see `objective/ui.md`.
 
 ## Two modes
 
-- **CPU mode** — no GPU, no model weights, no ComfyUI checkout. Runs the CLI against a mock backend that fakes generation. Use this for developing/testing the CLI, validation, and surrounding application code.
-- **GPU mode** — real inference via a headless ComfyUI import on an actual RTX 5090. Use this for developing the model-loading/inference pipeline itself, or for real generation.
+- **CPU mode** — no GPU, no model weights, no ComfyUI checkout, no network access. Runs the CLI or the web UI against a mock backend that fakes generation. Use this for developing/testing application code (CLI, validation, the web UI itself).
+- **GPU mode** — real inference via a headless ComfyUI import on an actual RTX 5090. Use this for developing the model-loading/inference pipeline, or for real generation.
 
-Both modes share the same CLI and code paths outside the backend itself.
+Both modes share the same CLI, web UI, and code paths outside the backend itself.
 
 ---
 
@@ -19,6 +19,11 @@ Both modes share the same CLI and code paths outside the backend itself.
 
 ```bash
 make sync    # installs uv if needed, then `uv sync`
+```
+
+### CLI
+
+```bash
 make mock    # runs generate.py --mock, writes a placeholder output.mp4
 make test    # runs the test suite (installs ffmpeg if needed)
 ```
@@ -38,11 +43,19 @@ uv run pytest -q
 
 `--mock` needs no CUDA, no model files, and no network access.
 
+### Web UI
+
+```bash
+make serve-mock   # starts the UI at http://localhost:8000 (override with PORT=...) against the mock backend
+```
+
+Open the printed URL in a browser. Upload an image, queue a prompt, and the mock backend fakes a full generation end-to-end (progress log, output dropdown, video player) — no GPU, model files, or network access involved. Use this to develop/test the UI itself before touching real hardware.
+
 ---
 
 ## GPU mode (real inference)
 
-### Automated
+### Automated setup
 
 ```bash
 make setup
@@ -50,11 +63,16 @@ make setup
 
 Installs `uv` and `ffmpeg` if missing, clones the pinned ComfyUI checkout (`COMFYUI_REF` in the `Makefile` — the real backend imports it headlessly as a library, no server/UI, rather than vendoring MiniMax H3 code), runs `uv sync --group gpu`, then verifies the whole chain (ffmpeg binaries, CUDA visible, ComfyUI importable). Safe to re-run — every step is a no-op if already done.
 
-Then fetch weights and generate:
+### Fetch weights
 
 ```bash
 make fetch-stock                     # fixed Qwen encoder + video/audio VAEs (~21GB)
 make fetch-dit DIT_URL=<url>         # your chosen swappable DiT checkpoint
+```
+
+### CLI
+
+```bash
 uv run python generate.py \
   --model /workspace/ComfyUI/models/diffusion_models/my_h3_model.safetensors \
   --image input.jpg \
@@ -62,7 +80,17 @@ uv run python generate.py \
   --output output.mp4
 ```
 
-A bare `--output` filename (no directory) lands in `outputs/` (auto-created, gitignored); a path with an explicit directory is respected as-is.
+A bare `--output` filename (no directory) lands in `outputs/` (auto-created, gitignored); a path with an explicit directory is respected as-is. The same applies to `--image`, which lands in `inputs/`.
+
+### Web UI
+
+```bash
+make serve        # requires a DiT checkpoint already in diffusion_models/ (see "Fetch weights" above)
+```
+
+Open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead — the server binds `0.0.0.0` and has no RunPod-specific code, so this is purely a deploy-time choice.
+
+The DiT checkpoint is auto-discovered from `diffusion_models/` at startup — if more than one `.safetensors` file is present there, set `H3_MODEL_PATH` to pick one explicitly. The real backend keeps the fixed Qwen/VAE models and the discovered DiT loaded in memory across queued jobs instead of reloading them from disk every time — only the first generation after startup pays the full load cost. Up to 5 prompts can be queued; "Clear queue" removes pending jobs only, a job already generating always finishes.
 
 ### Step by step (without `make setup`)
 
@@ -76,16 +104,21 @@ make check       # verify ffmpeg, CUDA, and the ComfyUI import all actually work
 
 Each target is independently a no-op if already satisfied, so you can re-run any of them freely. `make check` on its own re-verifies setup any time.
 
-### Configuration
+---
 
-Two env vars, read once by `h3.py` at import time:
+## Configuration
+
+Env vars, read once at import time:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `COMFYUI_ROOT` | sibling `ComfyUI` dir next to this repo checkout | Where the real backend imports `comfy.sd` etc. from. |
-| `MODELS_ROOT` | `$COMFYUI_ROOT/models` | Where the fixed Qwen/VAE weights and swappable DiT checkpoints live (ComfyUI's standard layout: `text_encoders/`, `vae/`, `diffusion_models/`). |
+| `COMFYUI_ROOT` | sibling `ComfyUI` dir next to this repo checkout | Where the real backend imports `comfy.sd` etc. from (`h3.py`). |
+| `MODELS_ROOT` | `$COMFYUI_ROOT/models` | Where the fixed Qwen/VAE weights and swappable DiT checkpoints live (ComfyUI's standard layout: `text_encoders/`, `vae/`, `diffusion_models/`) (`h3.py`). |
+| `H3_MODEL_PATH` | unset (auto-discover) | Web UI only: forces a specific DiT checkpoint instead of auto-discovering the one file in `diffusion_models/` — required if more than one is present (`web/server.py`). |
+| `H3_MOCK` | unset (real backend) | Web UI only: set to run `web/server.py` against the mock backend instead of the real one (this is what `make serve-mock` sets). |
+| `PORT` | `8000` | Web UI only: the port `web/server.py` listens on. |
 
-`COMFYUI_ROOT`'s default (in both the `Makefile` and `h3.py`) is computed from the repo checkout's own location, not a hardcoded path — it works unmodified whether the parent directory is `workspace` (RunPod) or `workspaces` (Codespaces). Override either var if your setup mounts things elsewhere.
+`COMFYUI_ROOT`'s default (in both the `Makefile` and `h3.py`) is computed from the repo checkout's own location, not a hardcoded path — it works unmodified whether the parent directory is `workspace` (RunPod) or `workspaces` (Codespaces). Override any of these if your setup mounts things elsewhere.
 
 Nothing else is configurable by design — see `objective/objective.md`'s "Do not expose" list.
 
@@ -115,19 +148,6 @@ First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (tur
 - Don't work around it by changing resolution or frame count — those aren't exposed on the CLI by design; report the failure and investigate instead.
 
 ---
-
-## Web UI
-
-A very small Flask UI for queueing generations from a browser (including a phone, via RunPod's HTTP proxy) instead of running the CLI by hand. Same `inputs/`/`outputs/` folders and `h3.py` backend as the CLI.
-
-```bash
-make serve-mock   # no GPU/model files needed, for developing/testing the UI itself
-make serve        # real backend; requires a DiT checkpoint already in diffusion_models/
-```
-
-Then open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead.
-
-The real backend keeps the fixed Qwen/VAE models and the auto-discovered DiT checkpoint loaded in memory across queued jobs instead of reloading them from disk every time — only the first generation after startup pays the full load cost. Up to 5 prompts can be queued; "Delete queue" clears pending jobs only, a job already generating always finishes. If more than one `.safetensors` file exists in `diffusion_models/`, set `H3_MODEL_PATH` to pick one explicitly.
 
 ## Checkpoint support
 
