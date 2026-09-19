@@ -2,87 +2,249 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MiniMax H3</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    --bg: #0a0a0d;
+    --card: #111117;
+    --border: #26262f;
+    --border-soft: #1c1c24;
+    --input-bg: #16161d;
+    --text: #f0f0f3;
+    --muted: #8b8b96;
+    --accent: #2f3a5c;
+    --accent-hover: #3a4770;
+    --danger: #e5555f;
+    --ok: #4ade80;
+    --busy: #60a5fa;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: system-ui, sans-serif;
-    max-width: 480px;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    padding: 24px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .card {
+    max-width: 520px;
     margin: 0 auto;
-    padding: 16px;
-    line-height: 1.4;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
   }
-  h1 { font-size: 1.3rem; margin-bottom: 4px; }
-  section { margin-bottom: 20px; }
-  label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 0.9rem; }
-  select, input, textarea, button {
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  header h1 { font-size: 1.05rem; margin: 0; }
+  header p { margin: 2px 0 0; font-size: 0.82rem; color: var(--muted); }
+  .pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 11px; white-space: nowrap;
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill.ready .dot { background: var(--ok); }
+  .pill.busy .dot { background: var(--busy); animation: pulse 1.6s infinite; }
+  .pill.error .dot { background: var(--danger); }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(96,165,250,0.45); }
+    70% { box-shadow: 0 0 0 6px rgba(96,165,250,0); }
+    100% { box-shadow: 0 0 0 0 rgba(96,165,250,0); }
+  }
+
+  section { padding: 18px 20px; border-bottom: 1px solid var(--border-soft); }
+  section:last-child { border-bottom: none; }
+  .section-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .section-head label { font-weight: 600; font-size: 0.92rem; }
+  .section-head .hint { font-size: 0.78rem; color: var(--muted); }
+
+  select, input[type=number], textarea {
     width: 100%;
-    box-sizing: border-box;
-    font-size: 1rem;
-    padding: 8px;
-    margin-bottom: 8px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    font-size: 0.95rem;
+    padding: 10px 12px;
+    appearance: none;
+    -webkit-appearance: none;
   }
-  textarea { resize: vertical; min-height: 4em; }
-  .row { display: flex; gap: 8px; }
-  .row > div { flex: 1; }
-  button { cursor: pointer; }
-  button.primary { font-weight: 600; }
-  button.danger { background: #fdd; }
-  #status-line { font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; }
-  #error-line { color: #c00; font-size: 0.9rem; min-height: 1.2em; }
-  video { width: 100%; }
+  textarea { resize: vertical; min-height: 4.5em; font-family: inherit; }
+  ::placeholder { color: #5b5b66; }
+
+  .select-wrap { position: relative; }
+  .select-wrap select { padding-right: 30px; }
+  .select-wrap .chevron {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    pointer-events: none; color: var(--muted); font-size: 0.75rem;
+  }
+
+  .row-upload { display: flex; gap: 8px; }
+  .row-upload .select-wrap { flex: 1; }
+
+  .subtext { margin-top: 10px; font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .subtext .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--busy); flex: none; }
+
+  .knobs { display: flex; gap: 10px; }
+  .knobs > div { flex: 1; }
+  .knobs label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
+  .seed-row { display: flex; gap: 6px; }
+
+  button { font-family: inherit; cursor: pointer; }
+  .btn {
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--input-bg); color: var(--text); font-size: 0.9rem; padding: 10px 16px;
+  }
+  .btn:hover { background: #1d1d26; }
+  .icon-btn {
+    flex: 0 0 auto; width: 40px; height: 40px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--input-bg); border: 1px solid var(--border); border-radius: 9px;
+    color: var(--muted); font-size: 1.05rem;
+  }
+  .icon-btn:hover { color: var(--text); }
+  .primary {
+    width: 100%; padding: 13px; font-size: 0.95rem; font-weight: 600;
+    background: var(--accent); border: 1px solid #3c4a72; color: #fff; border-radius: 10px;
+  }
+  .primary:hover { background: var(--accent-hover); }
+  .link-btn {
+    background: none; border: none; color: var(--danger); font-size: 0.82rem; padding: 0;
+  }
+
+  .queue-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 12px; font-size: 0.82rem; color: var(--muted);
+  }
+
+  .video-box { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #000; }
+  video { width: 100%; display: block; max-height: 320px; background: #000; }
+  .video-meta { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); padding: 8px 2px 0; }
+
+  .progress-row { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px; }
+  .progress-row .muted { color: var(--muted); }
+  .progress-track { height: 5px; border-radius: 3px; background: var(--border-soft); overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--busy); transition: width 0.3s ease; }
+  .progress-fill.done { background: var(--ok); }
+  .progress-fill.error { background: var(--danger); }
+
+  details summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; list-style: none; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: '▸ '; color: var(--muted); }
+  details[open] summary::before { content: '▾ '; }
+  #log {
+    margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+    color: var(--muted); white-space: pre-wrap; max-height: 160px; overflow-y: auto;
+  }
+
+  .field-error { margin-top: 8px; font-size: 0.8rem; color: var(--danger); }
+  .field-error:empty { display: none; }
 </style>
 </head>
 <body>
 
-<h1>MiniMax H3</h1>
-<div id="error-line"></div>
-
-<section>
-  <label>Input image</label>
-  <input type="file" id="upload-file" accept="image/*">
-  <button id="upload-btn">Upload</button>
-  <select id="image-select"></select>
-</section>
-
-<section>
-  <label>Prompt</label>
-  <textarea id="prompt" placeholder="The person slowly turns toward the camera."></textarea>
-</section>
-
-<section>
-  <div class="row">
+<div class="card">
+  <header>
     <div>
-      <label>Duration</label>
-      <select id="duration">
-        <option value="5">5s</option>
-        <option value="7.5">7.5s</option>
-        <option value="10">10s</option>
-      </select>
+      <h1>MiniMax H3</h1>
+      <p>Image &rarr; video</p>
     </div>
-    <div>
-      <label>Steps</label>
-      <input type="number" id="steps" value="20" min="1">
-    </div>
-    <div>
-      <label>Seed</label>
-      <input type="number" id="seed" value="42">
-    </div>
-  </div>
-</section>
+    <div class="pill" id="status-pill"><span class="dot"></span><span id="status-pill-text">Loading&hellip;</span></div>
+  </header>
 
-<section>
-  <button class="primary" id="generate-btn">Generate</button>
-  <button class="danger" id="delete-queue-btn">Delete queue</button>
-  <div id="status-line">idle</div>
-</section>
+  <section>
+    <div class="section-head"><label>Input image</label></div>
+    <div class="row-upload">
+      <div class="select-wrap">
+        <select id="image-select"></select>
+        <span class="chevron">&#9662;</span>
+      </div>
+      <label class="btn" for="upload-file">Upload</label>
+      <input type="file" id="upload-file" accept="image/*" hidden>
+    </div>
+    <div class="subtext"><span class="dot"></span><span id="image-hint">No image uploaded yet</span></div>
+    <div class="field-error" id="upload-error"></div>
+  </section>
 
-<section>
-  <label>Output video</label>
-  <select id="video-select"></select>
-  <video id="video-player" controls></video>
-</section>
+  <section>
+    <div class="section-head">
+      <label>Prompt</label>
+      <span class="hint"><span id="prompt-count">0</span> / 600</span>
+    </div>
+    <textarea id="prompt" maxlength="600" placeholder="The person slowly turns toward the camera."></textarea>
+  </section>
+
+  <section>
+    <div class="knobs">
+      <div>
+        <label>Duration</label>
+        <div class="select-wrap">
+          <select id="duration">
+            <option value="5">5 sec</option>
+            <option value="7.5">7.5 sec</option>
+            <option value="10">10 sec</option>
+          </select>
+          <span class="chevron">&#9662;</span>
+        </div>
+      </div>
+      <div>
+        <label>Steps</label>
+        <input type="number" id="steps" value="20" min="1">
+      </div>
+      <div>
+        <label>Seed</label>
+        <div class="seed-row">
+          <input type="number" id="seed" value="42">
+          <button class="icon-btn" id="randomize-seed" type="button" title="Randomize seed">&#8635;</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <button class="primary" id="generate-btn">Generate video</button>
+    <div class="queue-row">
+      <span id="queue-text">0 prompts queued</span>
+      <button class="link-btn" id="delete-queue-btn" type="button">Clear queue</button>
+    </div>
+    <div class="field-error" id="queue-error"></div>
+  </section>
+
+  <section>
+    <div class="section-head"><label>Video</label></div>
+    <div class="select-wrap" style="margin-bottom: 8px;">
+      <select id="video-select"></select>
+      <span class="chevron">&#9662;</span>
+    </div>
+    <p class="hint" style="margin: 0 0 10px;">Select any generated video to load it here.</p>
+    <div class="video-box"><video id="video-player" controls></video></div>
+    <div class="video-meta"><span id="video-name">&mdash;</span><span id="video-duration"></span></div>
+  </section>
+
+  <section>
+    <div class="progress-row"><span id="status-text">Idle</span><span class="muted" id="status-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+  </section>
+
+  <section>
+    <details open>
+      <summary>Generation log</summary>
+      <div id="log">Ready.</div>
+    </details>
+  </section>
+</div>
 
 <script>
 async function api(path, options) {
@@ -93,13 +255,19 @@ async function api(path, options) {
   return body;
 }
 
-function showError(msg) {
-  document.getElementById('error-line').textContent = msg || '';
+const logLines = [];
+function logLine(text) {
+  logLines.push(text);
+  if (logLines.length > 50) logLines.shift();
+  document.getElementById('log').textContent = logLines.join('\n');
 }
 
-// Populates `select` from `files`, keeping the previous selection if it still exists.
-// Returns true if the previous selection survived, so callers can decide what to do
-// when it didn't (e.g. fall back to selecting the newest entry).
+function setPill(state, text) {
+  const pill = document.getElementById('status-pill');
+  pill.className = 'pill ' + state;
+  document.getElementById('status-pill-text').textContent = text;
+}
+
 function populateSelect(select, files, previous) {
   select.innerHTML = '';
   for (const name of files) {
@@ -115,10 +283,17 @@ function populateSelect(select, files, previous) {
   return false;
 }
 
+function updateImageHint() {
+  const select = document.getElementById('image-select');
+  document.getElementById('image-hint').textContent =
+    select.value ? `${select.value} selected` : 'No image uploaded yet';
+}
+
 async function refreshInputs(selectName) {
   const select = document.getElementById('image-select');
   const files = await api('/api/inputs');
   populateSelect(select, files, selectName || select.value);
+  updateImageHint();
 }
 
 async function refreshOutputs() {
@@ -127,74 +302,122 @@ async function refreshOutputs() {
   const kept = populateSelect(select, files, select.value);
   if (!kept && files.length) {
     select.value = files[0];
-    document.getElementById('video-player').src = '/outputs/' + files[0];
+    loadVideo(files[0]);
   }
 }
 
-document.getElementById('video-select').addEventListener('change', (e) => {
-  document.getElementById('video-player').src = e.target.value ? '/outputs/' + e.target.value : '';
+function loadVideo(name) {
+  document.getElementById('video-player').src = name ? '/outputs/' + name : '';
+  document.getElementById('video-name').textContent = name || '—';
+  document.getElementById('video-duration').textContent = '';
+}
+
+document.getElementById('image-select').addEventListener('change', updateImageHint);
+
+document.getElementById('video-select').addEventListener('change', (e) => loadVideo(e.target.value));
+
+document.getElementById('video-player').addEventListener('loadedmetadata', (e) => {
+  const d = Math.round(e.target.duration);
+  document.getElementById('video-duration').textContent = `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
 });
 
-document.getElementById('upload-btn').addEventListener('click', async () => {
-  showError('');
+document.getElementById('prompt').addEventListener('input', (e) => {
+  document.getElementById('prompt-count').textContent = e.target.value.length;
+});
+
+document.getElementById('randomize-seed').addEventListener('click', () => {
+  document.getElementById('seed').value = Math.floor(Math.random() * 1_000_000);
+});
+
+document.getElementById('upload-file').addEventListener('change', async () => {
   const input = document.getElementById('upload-file');
-  if (!input.files.length) return showError('Choose a file first');
+  const errorEl = document.getElementById('upload-error');
+  errorEl.textContent = '';
+  if (!input.files.length) return;
   const formData = new FormData();
   formData.append('file', input.files[0]);
   try {
     const result = await api('/api/upload', { method: 'POST', body: formData });
     await refreshInputs(result.filename);
-    input.value = '';
+    logLine(`Uploaded ${result.filename}`);
   } catch (e) {
-    showError(e.message);
+    errorEl.textContent = e.message;
+    logLine(`Upload error: ${e.message}`);
+  } finally {
+    input.value = '';
   }
 });
 
 document.getElementById('generate-btn').addEventListener('click', async () => {
-  showError('');
+  const errorEl = document.getElementById('queue-error');
+  errorEl.textContent = '';
   const image = document.getElementById('image-select').value;
   const prompt = document.getElementById('prompt').value.trim();
   const duration = parseFloat(document.getElementById('duration').value);
   const steps = parseInt(document.getElementById('steps').value, 10);
   const seed = parseInt(document.getElementById('seed').value, 10);
-  if (!image) return showError('No input image selected');
-  if (!prompt) return showError('Prompt is required');
+  if (!image) { errorEl.textContent = 'No input image selected'; return; }
+  if (!prompt) { errorEl.textContent = 'Prompt is required'; return; }
   try {
     await api('/api/queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image, prompt, duration, steps, seed }),
     });
+    logLine(`Queued: "${prompt}"`);
   } catch (e) {
-    showError(e.message);
+    errorEl.textContent = e.message;
+    logLine(`Queue error: ${e.message}`);
   }
 });
 
 document.getElementById('delete-queue-btn').addEventListener('click', async () => {
-  showError('');
+  const errorEl = document.getElementById('queue-error');
+  errorEl.textContent = '';
   try {
-    await api('/api/queue', { method: 'DELETE' });
+    const result = await api('/api/queue', { method: 'DELETE' });
+    logLine(`Cleared ${result.drained} pending job(s)`);
   } catch (e) {
-    showError(e.message);
+    errorEl.textContent = e.message;
   }
 });
 
 let lastOutputsMtime = null;
+let lastLoggedMessage = null;
 
 async function poll() {
   try {
     const s = await api('/api/status');
     const job = s.current_job;
-    const lines = [`${s.queue_length} prompt${s.queue_length === 1 ? '' : 's'} queued`];
+
+    document.getElementById('queue-text').textContent =
+      `${s.queue_length} prompt${s.queue_length === 1 ? '' : 's'} queued`;
+
+    const fill = document.getElementById('progress-fill');
+    fill.className = 'progress-fill';
     if (!s.backend_ready) {
-      lines.push(`backend not ready: ${s.backend_error || 'unknown error'}`);
+      setPill('error', 'Backend error');
+      document.getElementById('status-text').textContent = s.backend_error || 'Backend not ready';
+      document.getElementById('status-pct').textContent = '';
     } else if (job) {
-      lines.push(`${job.message} (${Math.round(job.progress * 100)}%)`);
-      if (job.status === 'error') showError(job.message);
+      const pct = Math.round(job.progress * 100);
+      document.getElementById('status-text').textContent = job.message;
+      document.getElementById('status-pct').textContent = `${pct}%`;
+      fill.style.width = `${pct}%`;
+      if (job.status === 'running') setPill('busy', 'Generating');
+      else if (job.status === 'error') { setPill('error', 'Error'); fill.classList.add('error'); }
+      else { setPill('ready', 'Ready'); fill.classList.add('done'); }
+
+      if (job.message !== lastLoggedMessage) {
+        lastLoggedMessage = job.message;
+        logLine(job.status === 'error' ? `Error: ${job.message}` : job.message);
+      }
     } else {
-      lines.push('idle');
+      setPill('ready', 'Ready');
+      document.getElementById('status-text').textContent = 'Idle';
+      document.getElementById('status-pct').textContent = '0%';
+      fill.style.width = '0%';
     }
-    document.getElementById('status-line').textContent = lines.join('\n');
 
     // outputs_mtime is one stat() call; only pay for the full outputs listing (a
     // directory scan + a stat per file) when something in outputs/ actually changed.
@@ -203,7 +426,7 @@ async function poll() {
       await refreshOutputs();
     }
   } catch (e) {
-    showError(e.message);
+    setPill('error', 'Offline');
   }
 }
 
