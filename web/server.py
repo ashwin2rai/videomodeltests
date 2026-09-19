@@ -43,15 +43,15 @@ current_job = None  # {"prompt", "progress", "status", "message"} or None
 
 def _init_backend():
     global backend, model_path, backend_ready, backend_error
-
-    if MOCK:
-        backend = h3.MockH3Backend()
-        model_path = "mock.safetensors"
-    else:
-        backend = h3.H3Backend()
-        model_path = h3.discover_dit_checkpoint()
-
+    backend_ready = False
+    backend_error = None
     try:
+        if MOCK:
+            backend = h3.MockH3Backend()
+            model_path = "mock.safetensors"
+        else:
+            backend = h3.H3Backend()
+            model_path = h3.discover_dit_checkpoint()
         backend.load()
         backend_ready = True
         logger.info("Backend ready (mock=%s, model=%s)", MOCK, model_path)
