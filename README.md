@@ -116,6 +116,19 @@ First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (tur
 
 ---
 
+## Web UI
+
+A very small Flask UI for queueing generations from a browser (including a phone, via RunPod's HTTP proxy) instead of running the CLI by hand. Same `inputs/`/`outputs/` folders and `h3.py` backend as the CLI.
+
+```bash
+make serve-mock   # no GPU/model files needed, for developing/testing the UI itself
+make serve        # real backend; requires a DiT checkpoint already in diffusion_models/
+```
+
+Then open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead.
+
+The real backend keeps the fixed Qwen/VAE models and the auto-discovered DiT checkpoint loaded in memory across queued jobs instead of reloading them from disk every time — only the first generation after startup pays the full load cost. Up to 5 prompts can be queued; "Delete queue" clears pending jobs only, a job already generating always finishes. If more than one `.safetensors` file exists in `diffusion_models/`, set `H3_MODEL_PATH` to pick one explicitly.
+
 ## Checkpoint support
 
 Only the MiniMax H3 FL2VA DiT is swappable, as a filesystem path to a `.safetensors` file (BF16, or supported INT8/INT8-ConvRot). `h3.validate_checkpoint()` inspects the header and rejects GGUF, malformed files, and anything without the real H3 tensor signature. **Known limitation:** FL2VA and Ref2VA checkpoints have identical tensor layouts — Ref2VA rejection is filename-based only, not a real content check.

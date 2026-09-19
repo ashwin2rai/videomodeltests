@@ -42,6 +42,9 @@ CFG = 1.0
 
 MAX_SAFETENSORS_HEADER_SIZE = 100_000_000
 MIN_OUTPUT_FREE_BYTES = 500 * 1024 * 1024
+# Rough, unmeasured allowance for OS/Python/CUDA-context overhead on top of raw model
+# weights, used only for the RAM headroom warning below -- not a hard limit.
+RAM_OVERHEAD_ALLOWANCE_BYTES = 15 * 1024**3
 
 H3_BLOCK_KEY_RE = re.compile(r"^blocks\.\d+\.")
 H3_DISTINCTIVE_KEYS = {"video_patch_proj.weight", "audio_patch_proj.weight", "token_refiner.final_norm.weight"}
@@ -191,6 +194,60 @@ def validate_checkpoint(path):
     return {"tensor_count": len(header), "dtypes": dtypes, "metadata": metadata}
 
 
+def discover_dit_checkpoint(models_root=None):
+    """Finds the one DiT checkpoint already downloaded into MODELS_ROOT/diffusion_models,
+    for callers (the web server) that don't take --model as an explicit per-request argument.
+    An H3_MODEL_PATH env var always wins, for disambiguation or a non-standard location."""
+    override = os.environ.get("H3_MODEL_PATH")
+    if override:
+        return str(_require_file(override, "DiT checkpoint (H3_MODEL_PATH)"))
+
+    models_root = models_root or MODELS_ROOT
+    candidates = sorted(Path(models_root, "diffusion_models").glob("*.safetensors"))
+    if len(candidates) == 1:
+        return str(candidates[0])
+    if not candidates:
+        raise ValueError(
+            f"No DiT checkpoint found in {models_root}/diffusion_models. "
+            "Fetch one first (see `make fetch-dit`), or set H3_MODEL_PATH explicitly."
+        )
+    raise ValueError(
+        f"Found {len(candidates)} DiT checkpoints in {models_root}/diffusion_models: "
+        f"{[c.name for c in candidates]}. Set H3_MODEL_PATH to pick one."
+    )
+
+
+def warn_if_ram_tight(dit_path):
+    """Visibility only -- logs a warning if caching this DiT alongside the fixed Qwen/VAE
+    models is likely to approach total system RAM. Does not change any behavior or block
+    loading. Assumes each checkpoint's resident RAM cost roughly matches its file size;
+    see objective/status.md's open question about whether quantized checkpoints are
+    expanded into a larger representation at load time, which this can't detect."""
+    try:
+        import psutil
+    except ImportError:
+        return  # psutil is a `gpu`-group dependency; nothing to check without it
+
+    fixed_bytes = sum(
+        Path(p).stat().st_size
+        for p in (QWEN_ENCODER_PATH, VIDEO_VAE_PATH, AUDIO_VAE_PATH)
+        if Path(p).is_file()
+    )
+    dit_bytes = Path(dit_path).stat().st_size
+    estimated = fixed_bytes + dit_bytes + RAM_OVERHEAD_ALLOWANCE_BYTES
+    total = psutil.virtual_memory().total
+
+    if estimated > total:
+        logger.warning(
+            "Estimated resident RAM for cached models (~%.1fGB: %.1fGB fixed models + "
+            "%.1fGB DiT + %.1fGB overhead allowance) is close to or exceeds total system "
+            "RAM (~%.1fGB). If generation crashes or the machine becomes unresponsive, "
+            "this is the likely cause.",
+            estimated / 1e9, fixed_bytes / 1e9, dit_bytes / 1e9,
+            RAM_OVERHEAD_ALLOWANCE_BYTES / 1e9, total / 1e9,
+        )
+
+
 def check_disk_space(output_path, required_bytes=MIN_OUTPUT_FREE_BYTES):
     directory = Path(output_path).resolve().parent
     free = shutil.disk_usage(directory).free
@@ -299,6 +356,19 @@ def _import_comfy():
 
 
 class H3Backend:
+    """Stateful across calls: `generate()` caches loaded models on `self` instead of
+    reloading them from disk every time, so a caller that keeps one instance alive across
+    many generate() calls (the web server's queue) only pays full load cost once. A caller
+    that creates a fresh instance per call (generate.py's CLI) sees no behavior change --
+    caching simply never has a chance to trigger."""
+
+    def __init__(self):
+        self._qwen = None
+        self._video_vae = None
+        self._audio_vae = None
+        self._dit_path = None
+        self._dit_model = None
+
     def load(self):
         try:
             import torch
@@ -346,10 +416,21 @@ class H3Backend:
         # nothing else is, and VAE decode's graph accumulates unboundedly across a
         # multi-tile decode until it OOMs on a card that would otherwise have room.
         with torch.inference_mode():
-            clip = sd.load_clip([QWEN_ENCODER_PATH], clip_type=sd.CLIPType.MINIMAX)
-            video_vae = sd.VAE(sd=utils.load_torch_file(VIDEO_VAE_PATH))
-            audio_vae = sd.VAE(sd=utils.load_torch_file(AUDIO_VAE_PATH))
-            model = sd.load_diffusion_model(model_path)
+            if self._qwen is None:
+                self._qwen = sd.load_clip([QWEN_ENCODER_PATH], clip_type=sd.CLIPType.MINIMAX)
+            if self._video_vae is None:
+                self._video_vae = sd.VAE(sd=utils.load_torch_file(VIDEO_VAE_PATH))
+            if self._audio_vae is None:
+                self._audio_vae = sd.VAE(sd=utils.load_torch_file(AUDIO_VAE_PATH))
+            if self._dit_model is None or self._dit_path != model_path:
+                warn_if_ram_tight(model_path)
+                self._dit_model = sd.load_diffusion_model(model_path)
+                self._dit_path = model_path
+
+            clip = self._qwen
+            video_vae = self._video_vae
+            audio_vae = self._audio_vae
+            model = self._dit_model
 
             report(0.1, "encoding prompt and image")
             image_tensor = torch.from_numpy(np.array(image).astype(np.float32) / 255.0)[None, ...]

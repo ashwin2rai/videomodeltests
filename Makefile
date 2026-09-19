@@ -13,7 +13,7 @@ COMFYUI_ROOT ?= $(abspath $(CURDIR)/..)/ComfyUI
 # objective/status.md). Bump deliberately, not implicitly via `main` drift.
 COMFYUI_REF ?= v0.36.0
 
-.PHONY: help uv ffmpeg sync sync-gpu comfyui setup check test mock clean fetch-stock fetch-dit lint install-hooks
+.PHONY: help uv ffmpeg sync sync-gpu comfyui setup check test mock serve serve-mock clean fetch-stock fetch-dit lint install-hooks
 
 help:
 	@echo "make setup       - everything needed for real generation except model weights:"
@@ -31,6 +31,8 @@ help:
 	@echo "make install-hooks - install the ruff pre-commit hook into .git/hooks/"
 	@echo "make test        - run the test suite"
 	@echo "make mock        - run a mock generation (no GPU/model files needed)"
+	@echo "make serve       - run the web UI with the real GPU backend"
+	@echo "make serve-mock  - run the web UI with the mock backend (no GPU/model files needed)"
 	@echo "make fetch-stock - download the fixed Qwen encoder + video/audio VAEs"
 	@echo "make fetch-dit DIT_URL=<url> [DIT_NAME=<filename>] - download a DiT checkpoint"
 	@echo "                (add HF_TOKEN=<token> to either fetch target for authenticated"
@@ -97,6 +99,12 @@ mock: uv
 		--image tests/assets/test.jpg \
 		--prompt "Test prompt" \
 		--output output.mp4
+
+serve: uv
+	$(UV) run python web/server.py
+
+serve-mock: uv
+	H3_MOCK=1 $(UV) run python web/server.py
 
 fetch-stock: uv
 	HF_TOKEN="$(HF_TOKEN)" ./scripts/fetch_models.sh stock

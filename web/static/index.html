@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniMax H3</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+    line-height: 1.4;
+  }
+  h1 { font-size: 1.3rem; margin-bottom: 4px; }
+  section { margin-bottom: 20px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 0.9rem; }
+  select, input, textarea, button {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 1rem;
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+  textarea { resize: vertical; min-height: 4em; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  button { cursor: pointer; }
+  button.primary { font-weight: 600; }
+  button.danger { background: #fdd; }
+  #status-line { font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; }
+  #error-line { color: #c00; font-size: 0.9rem; min-height: 1.2em; }
+  video { width: 100%; }
+</style>
+</head>
+<body>
+
+<h1>MiniMax H3</h1>
+<div id="error-line"></div>
+
+<section>
+  <label>Input image</label>
+  <input type="file" id="upload-file" accept="image/*">
+  <button id="upload-btn">Upload</button>
+  <select id="image-select"></select>
+</section>
+
+<section>
+  <label>Prompt</label>
+  <textarea id="prompt" placeholder="The person slowly turns toward the camera."></textarea>
+</section>
+
+<section>
+  <div class="row">
+    <div>
+      <label>Duration</label>
+      <select id="duration">
+        <option value="5">5s</option>
+        <option value="7.5">7.5s</option>
+        <option value="10">10s</option>
+      </select>
+    </div>
+    <div>
+      <label>Steps</label>
+      <input type="number" id="steps" value="20" min="1">
+    </div>
+    <div>
+      <label>Seed</label>
+      <input type="number" id="seed" value="42">
+    </div>
+  </div>
+</section>
+
+<section>
+  <button class="primary" id="generate-btn">Generate</button>
+  <button class="danger" id="delete-queue-btn">Delete queue</button>
+  <div id="status-line">idle</div>
+</section>
+
+<section>
+  <label>Output video</label>
+  <select id="video-select"></select>
+  <video id="video-player" controls></video>
+</section>
+
+<script>
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = null;
+  try { body = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error((body && body.error) || res.statusText);
+  return body;
+}
+
+function showError(msg) {
+  document.getElementById('error-line').textContent = msg || '';
+}
+
+async function refreshInputs(selectName) {
+  const select = document.getElementById('image-select');
+  const files = await api('/api/inputs');
+  const previous = selectName || select.value;
+  select.innerHTML = '';
+  for (const name of files) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  if (previous && files.includes(previous)) select.value = previous;
+}
+
+async function refreshOutputs() {
+  const select = document.getElementById('video-select');
+  const previous = select.value;
+  const files = await api('/api/outputs');
+  select.innerHTML = '';
+  for (const name of files) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  if (previous && files.includes(previous)) {
+    select.value = previous;
+  } else if (files.length) {
+    select.value = files[0];
+    document.getElementById('video-player').src = '/outputs/' + files[0];
+  }
+}
+
+document.getElementById('video-select').addEventListener('change', (e) => {
+  document.getElementById('video-player').src = e.target.value ? '/outputs/' + e.target.value : '';
+});
+
+document.getElementById('upload-btn').addEventListener('click', async () => {
+  showError('');
+  const input = document.getElementById('upload-file');
+  if (!input.files.length) return showError('Choose a file first');
+  const formData = new FormData();
+  formData.append('file', input.files[0]);
+  try {
+    const result = await api('/api/upload', { method: 'POST', body: formData });
+    await refreshInputs(result.filename);
+    input.value = '';
+  } catch (e) {
+    showError(e.message);
+  }
+});
+
+document.getElementById('generate-btn').addEventListener('click', async () => {
+  showError('');
+  const image = document.getElementById('image-select').value;
+  const prompt = document.getElementById('prompt').value.trim();
+  const duration = parseFloat(document.getElementById('duration').value);
+  const steps = parseInt(document.getElementById('steps').value, 10);
+  const seed = parseInt(document.getElementById('seed').value, 10);
+  if (!image) return showError('No input image selected');
+  if (!prompt) return showError('Prompt is required');
+  try {
+    await api('/api/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image, prompt, duration, steps, seed }),
+    });
+  } catch (e) {
+    showError(e.message);
+  }
+});
+
+document.getElementById('delete-queue-btn').addEventListener('click', async () => {
+  showError('');
+  try {
+    await api('/api/queue', { method: 'DELETE' });
+  } catch (e) {
+    showError(e.message);
+  }
+});
+
+let lastOutputCount = -1;
+
+async function poll() {
+  try {
+    const s = await api('/api/status');
+    const job = s.current_job;
+    const lines = [`${s.queue_length} prompt${s.queue_length === 1 ? '' : 's'} queued`];
+    if (!s.backend_ready) {
+      lines.push(`backend not ready: ${s.backend_error || 'unknown error'}`);
+    } else if (job) {
+      lines.push(`${job.message} (${Math.round(job.progress * 100)}%)`);
+    } else {
+      lines.push('idle');
+    }
+    document.getElementById('status-line').textContent = lines.join('\n');
+
+    const outputs = await api('/api/outputs');
+    if (outputs.length !== lastOutputCount) {
+      lastOutputCount = outputs.length;
+      await refreshOutputs();
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+refreshInputs();
+refreshOutputs();
+poll();
+setInterval(poll, 1000);
+</script>
+
+</body>
+</html>
