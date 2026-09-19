@@ -12,7 +12,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 import h3  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 INPUTS_DIR = REPO_ROOT / "inputs"
@@ -28,13 +27,18 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 app = Flask(__name__)
 
 job_queue = queue.Queue(maxsize=MAX_QUEUE)
-state_lock = threading.Lock()
 
+# backend/model_path/backend_ready/backend_error are set once by _init_backend(), which
+# always finishes (main(), below) before the worker thread starts or Flask begins serving
+# requests -- so no lock is needed for them. current_job is different: it's mutated by the
+# worker thread while request threads read it via /api/status at arbitrary times during a
+# job's life, so it's the one piece of state that needs state_lock.
+state_lock = threading.Lock()
 backend = None
 model_path = None
 backend_ready = False
 backend_error = None
-current_job = None  # {"prompt", "progress", "message"} or None
+current_job = None  # {"prompt", "progress", "status", "message"} or None
 
 
 def _init_backend():
@@ -60,8 +64,9 @@ def _worker_loop():
     global current_job
     while True:
         job = job_queue.get()
+        logger.info("Starting job: %r (queue_length=%d)", job["prompt"], job_queue.qsize())
         with state_lock:
-            current_job = {"prompt": job["prompt"], "progress": 0.0, "message": "starting"}
+            current_job = {"prompt": job["prompt"], "progress": 0.0, "message": "starting", "status": "running"}
 
         def progress_callback(progress, message):
             with state_lock:
@@ -83,7 +88,12 @@ def _worker_loop():
         except Exception as e:
             logger.exception("Generation failed")
             with state_lock:
-                current_job["message"] = f"error: {e}"
+                current_job["status"] = "error"
+                current_job["message"] = str(e)
+        else:
+            logger.info("Job finished: %r -> %s", job["prompt"], output_path)
+            with state_lock:
+                current_job["status"] = "done"
         finally:
             job_queue.task_done()
 
@@ -166,6 +176,7 @@ def enqueue():
     except queue.Full:
         return jsonify({"error": f"Queue is full ({MAX_QUEUE}/{MAX_QUEUE})"}), 409
 
+    logger.info("Enqueued job: %r (queue_length=%d)", prompt, job_queue.qsize())
     return jsonify({"queue_length": job_queue.qsize()})
 
 
@@ -179,6 +190,7 @@ def clear_queue():
             break
         job_queue.task_done()
         drained += 1
+    logger.info("Cleared %d pending job(s) from the queue", drained)
     return jsonify({"drained": drained, "queue_length": job_queue.qsize()})
 
 
@@ -191,12 +203,20 @@ def status():
         "current_job": job,
         "backend_ready": backend_ready,
         "backend_error": backend_error,
+        # Cheap (single stat syscall) change signal so the client only needs to fetch the
+        # full (listing + per-file stat) /api/outputs when something has actually changed,
+        # instead of on every ~1s poll tick regardless.
+        "outputs_mtime": OUTPUTS_DIR.stat().st_mtime,
     })
 
 
-_init_backend()
-threading.Thread(target=_worker_loop, daemon=True).start()
-
-if __name__ == "__main__":
+def main():
+    h3.setup_logging()
+    _init_backend()
+    threading.Thread(target=_worker_loop, daemon=True).start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port, threaded=True)
+
+
+if __name__ == "__main__":
+    main()

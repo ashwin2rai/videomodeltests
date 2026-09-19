@@ -97,24 +97,10 @@ function showError(msg) {
   document.getElementById('error-line').textContent = msg || '';
 }
 
-async function refreshInputs(selectName) {
-  const select = document.getElementById('image-select');
-  const files = await api('/api/inputs');
-  const previous = selectName || select.value;
-  select.innerHTML = '';
-  for (const name of files) {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    select.appendChild(opt);
-  }
-  if (previous && files.includes(previous)) select.value = previous;
-}
-
-async function refreshOutputs() {
-  const select = document.getElementById('video-select');
-  const previous = select.value;
-  const files = await api('/api/outputs');
+// Populates `select` from `files`, keeping the previous selection if it still exists.
+// Returns true if the previous selection survived, so callers can decide what to do
+// when it didn't (e.g. fall back to selecting the newest entry).
+function populateSelect(select, files, previous) {
   select.innerHTML = '';
   for (const name of files) {
     const opt = document.createElement('option');
@@ -124,7 +110,22 @@ async function refreshOutputs() {
   }
   if (previous && files.includes(previous)) {
     select.value = previous;
-  } else if (files.length) {
+    return true;
+  }
+  return false;
+}
+
+async function refreshInputs(selectName) {
+  const select = document.getElementById('image-select');
+  const files = await api('/api/inputs');
+  populateSelect(select, files, selectName || select.value);
+}
+
+async function refreshOutputs() {
+  const select = document.getElementById('video-select');
+  const files = await api('/api/outputs');
+  const kept = populateSelect(select, files, select.value);
+  if (!kept && files.length) {
     select.value = files[0];
     document.getElementById('video-player').src = '/outputs/' + files[0];
   }
@@ -178,7 +179,7 @@ document.getElementById('delete-queue-btn').addEventListener('click', async () =
   }
 });
 
-let lastOutputCount = -1;
+let lastOutputsMtime = null;
 
 async function poll() {
   try {
@@ -189,14 +190,16 @@ async function poll() {
       lines.push(`backend not ready: ${s.backend_error || 'unknown error'}`);
     } else if (job) {
       lines.push(`${job.message} (${Math.round(job.progress * 100)}%)`);
+      if (job.status === 'error') showError(job.message);
     } else {
       lines.push('idle');
     }
     document.getElementById('status-line').textContent = lines.join('\n');
 
-    const outputs = await api('/api/outputs');
-    if (outputs.length !== lastOutputCount) {
-      lastOutputCount = outputs.length;
+    // outputs_mtime is one stat() call; only pay for the full outputs listing (a
+    // directory scan + a stat per file) when something in outputs/ actually changed.
+    if (s.outputs_mtime !== lastOutputsMtime) {
+      lastOutputsMtime = s.outputs_mtime;
       await refreshOutputs();
     }
   } catch (e) {

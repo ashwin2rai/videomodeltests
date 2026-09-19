@@ -16,6 +16,11 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
+
+def setup_logging():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
 SHORT_EDGE = 768
 ALIGNMENT = 32
 FPS = 24
@@ -200,11 +205,14 @@ def discover_dit_checkpoint(models_root=None):
     An H3_MODEL_PATH env var always wins, for disambiguation or a non-standard location."""
     override = os.environ.get("H3_MODEL_PATH")
     if override:
-        return str(_require_file(override, "DiT checkpoint (H3_MODEL_PATH)"))
+        path = str(_require_file(override, "DiT checkpoint (H3_MODEL_PATH)"))
+        logger.info("Using DiT checkpoint from H3_MODEL_PATH: %s", path)
+        return path
 
     models_root = models_root or MODELS_ROOT
     candidates = sorted(Path(models_root, "diffusion_models").glob("*.safetensors"))
     if len(candidates) == 1:
+        logger.info("Auto-discovered DiT checkpoint: %s", candidates[0])
         return str(candidates[0])
     if not candidates:
         raise ValueError(
@@ -416,21 +424,27 @@ class H3Backend:
         # nothing else is, and VAE decode's graph accumulates unboundedly across a
         # multi-tile decode until it OOMs on a card that would otherwise have room.
         with torch.inference_mode():
+            # Load (or reuse already-cached) models. Cached on `self`, not reloaded from
+            # disk per call, so a caller that keeps one H3Backend alive across many
+            # generate() calls (the web server's queue) only pays full load cost once.
             if self._qwen is None:
+                logger.info("Loading Qwen text/vision encoder (cached for the rest of this process)")
                 self._qwen = sd.load_clip([QWEN_ENCODER_PATH], clip_type=sd.CLIPType.MINIMAX)
             if self._video_vae is None:
+                logger.info("Loading video VAE (cached for the rest of this process)")
                 self._video_vae = sd.VAE(sd=utils.load_torch_file(VIDEO_VAE_PATH))
             if self._audio_vae is None:
+                logger.info("Loading audio VAE (cached for the rest of this process)")
                 self._audio_vae = sd.VAE(sd=utils.load_torch_file(AUDIO_VAE_PATH))
-            if self._dit_model is None or self._dit_path != model_path:
+            if self._dit_path != model_path:
+                logger.info("Loading DiT checkpoint: %s", model_path)
                 warn_if_ram_tight(model_path)
                 self._dit_model = sd.load_diffusion_model(model_path)
                 self._dit_path = model_path
+            else:
+                logger.info("Reusing cached DiT checkpoint: %s", model_path)
 
-            clip = self._qwen
-            video_vae = self._video_vae
-            audio_vae = self._audio_vae
-            model = self._dit_model
+            clip, video_vae, audio_vae, model = self._qwen, self._video_vae, self._audio_vae, self._dit_model
 
             report(0.1, "encoding prompt and image")
             image_tensor = torch.from_numpy(np.array(image).astype(np.float32) / 255.0)[None, ...]
