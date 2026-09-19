@@ -1,0 +1,9 @@
+#!/bin/sh
+# Installed into .git/hooks/pre-commit by `make install-hooks`. Lints the
+# whole project with ruff before allowing a commit; doesn't touch staged
+# content (no --fix here) so it never silently changes what you're committing.
+set -e
+
+UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+
+"$UV" run ruff check .

@@ -1,0 +1,60 @@
+[project]
+name = "videomodeltests"
+version = "0.1.0"
+description = "Minimal CLI for MiniMax H3 image-to-video inference experimentation"
+readme = "README.md"
+authors = [
+    { name = "ashwin2rai", email = "54918223+ashwin2rai@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+]
+# Runtime deps for the real H3 backend, which loads models via a git-cloned
+# ComfyUI checkout (see README) rather than vendoring MiniMax H3 code. Mirrors
+# ComfyUI's own requirements.txt essential section (server/UI-only entries
+# dropped: comfyui-frontend-package, comfyui-workflow-templates,
+# comfyui-embedded-docs, alembic, SQLAlchemy). Not needed for --mock or tests.
+gpu = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "torchsde",
+    "numpy>=1.25.0",
+    "einops",
+    "transformers>=4.50.3",
+    "tokenizers>=0.13.3",
+    "sentencepiece",
+    "safetensors>=0.4.2",
+    "aiohttp>=3.11.8",
+    "yarl>=1.18.0",
+    "pyyaml",
+    "scipy",
+    "tqdm",
+    "psutil",
+    "filelock",
+    "av>=17.0.0",
+    "comfy-kitchen==0.2.35",
+    "comfy-aimdo==0.5.5",
+    "requests",
+    "simpleeval>=1.0.0",
+    "blake3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
