@@ -40,6 +40,11 @@ def fail(message):
 def main(argv=None):
     args = parse_args(argv)
 
+    image_arg = Path(args.image)
+    if image_arg.parent == Path("."):  # bare filename: default into inputs/
+        image_arg = Path("inputs") / image_arg
+    args.image = str(image_arg)
+
     try:
         width, height = h3.validate_image(args.image)
     except (FileNotFoundError, ValueError) as e:

@@ -58,9 +58,11 @@ ffmpeg:
 # happens to ship. On a GPU box, always use `sync-gpu` below instead.
 sync: uv
 	$(UV) sync
+	mkdir -p inputs outputs
 
 sync-gpu: uv
 	$(UV) sync --group gpu
+	mkdir -p inputs outputs
 
 comfyui:
 	@if [ -d "$(COMFYUI_ROOT)/.git" ]; then \
