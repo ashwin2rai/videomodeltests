@@ -138,6 +138,7 @@
 
   .video-box { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #000; }
   video { width: 100%; display: block; max-height: 320px; background: #000; }
+  video[hidden] { display: none; }
   .video-meta { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); padding: 8px 2px 0; }
 
   .progress-row { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px; }
@@ -158,6 +159,20 @@
 
   .field-error { margin-top: 8px; font-size: 0.8rem; color: var(--danger); }
   .field-error:empty { display: none; }
+
+  .frame-box {
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    background: #000; display: flex; align-items: center; justify-content: center;
+    min-height: 120px;
+  }
+  .frame-box canvas { width: 100%; display: none; max-height: 320px; }
+  .frame-box canvas.visible { display: block; }
+  .frame-box .empty-hint { color: var(--muted); font-size: 0.82rem; padding: 30px 0; }
+  .frame-box .empty-hint.hidden { display: none; }
+  .frame-controls { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .frame-controls input[type=range] { flex: 1; accent-color: var(--busy); }
+  .frame-controls input[type=number] { width: 76px; flex: 0 0 auto; }
+  .frame-hint { margin: 8px 0 0; font-size: 0.78rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -252,6 +267,28 @@
       <div id="log">Ready.</div>
     </details>
   </section>
+
+  <section>
+    <details id="frame-extractor">
+      <summary>Extract frame from video</summary>
+      <div class="select-wrap" style="margin-top: 12px; margin-bottom: 8px;">
+        <select id="frame-video-select"><option value="">Select a video&hellip;</option></select>
+        <span class="chevron">&#9662;</span>
+      </div>
+      <div class="frame-box">
+        <canvas id="frame-canvas"></canvas>
+        <span class="empty-hint" id="frame-empty-hint">Select a video to browse its frames</span>
+      </div>
+      <video id="frame-video" hidden preload="metadata" muted></video>
+      <div class="frame-controls">
+        <input type="range" id="frame-slider" min="0" max="0" value="0" step="1" disabled>
+        <input type="number" id="frame-number" min="0" max="0" value="0" disabled>
+      </div>
+      <p class="frame-hint" id="frame-hint">&mdash;</p>
+      <button class="btn" id="save-frame-btn" style="margin-top: 10px; width: 100%;" disabled>Save frame to inputs/</button>
+      <div class="field-error" id="frame-error"></div>
+    </details>
+  </section>
 </div>
 
 <script>
@@ -316,14 +353,24 @@ let lastNewestOutput = null;
 // is still present in the list -- outputs/ only ever grows, so "is it still there"
 // never becomes false on its own.
 async function refreshOutputs() {
-  const select = document.getElementById('video-select');
   const files = await api('/api/outputs');
+
+  const select = document.getElementById('video-select');
   populateSelect(select, files, select.value);
   if (files.length && files[0] !== lastNewestOutput) {
     lastNewestOutput = files[0];
     select.value = files[0];
     loadVideo(files[0]);
   }
+
+  // Separate dropdown for frame extraction -- deliberately does not auto-load the
+  // newest video (unlike the player above): the user picks a video here explicitly
+  // when they want to grab a frame from it, not every time a new one finishes.
+  const frameSelect = document.getElementById('frame-video-select');
+  const previous = frameSelect.value;
+  populateSelect(frameSelect, files, previous);
+  frameSelect.insertAdjacentHTML('afterbegin', '<option value="">Select a video&hellip;</option>');
+  frameSelect.value = previous && files.includes(previous) ? previous : '';
 }
 
 function loadVideo(name) {
@@ -340,6 +387,100 @@ document.getElementById('video-player').addEventListener('loadedmetadata', (e) =
   const d = Math.round(e.target.duration);
   document.getElementById('video-duration').textContent = `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
 });
+
+// --- Frame extraction -------------------------------------------------
+// Frame <-> time uses h3.py's fixed FPS (24) -- every MP4 this app produces is
+// encoded at that rate (see h3.FPS), so it's a safe constant here rather than
+// something to read back from the video (HTML5 video elements don't expose fps).
+const FRAME_FPS = 24;
+let frameTotal = 0;
+
+const frameVideoEl = document.getElementById('frame-video');
+const frameCanvas = document.getElementById('frame-canvas');
+const frameCtx = frameCanvas.getContext('2d');
+const frameSlider = document.getElementById('frame-slider');
+const frameNumber = document.getElementById('frame-number');
+const frameEmptyHint = document.getElementById('frame-empty-hint');
+const frameHint = document.getElementById('frame-hint');
+const saveFrameBtn = document.getElementById('save-frame-btn');
+
+function formatTime(seconds) {
+  const s = Math.max(0, seconds);
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+}
+
+function setFrameControlsEnabled(enabled) {
+  frameSlider.disabled = !enabled;
+  frameNumber.disabled = !enabled;
+  saveFrameBtn.disabled = !enabled;
+  frameCanvas.classList.toggle('visible', enabled);
+  frameEmptyHint.classList.toggle('hidden', enabled);
+}
+
+function loadFrameVideo(name) {
+  document.getElementById('frame-error').textContent = '';
+  if (!name) {
+    frameVideoEl.removeAttribute('src');
+    setFrameControlsEnabled(false);
+    frameHint.textContent = '—';
+    return;
+  }
+  frameVideoEl.src = '/outputs/' + encodeURIComponent(name);
+  frameVideoEl.load();
+}
+
+frameVideoEl.addEventListener('loadedmetadata', () => {
+  frameTotal = Math.max(0, Math.round(frameVideoEl.duration * FRAME_FPS) - 1);
+  frameCanvas.width = frameVideoEl.videoWidth;
+  frameCanvas.height = frameVideoEl.videoHeight;
+  frameSlider.max = frameTotal;
+  frameNumber.max = frameTotal;
+  setFrameControlsEnabled(true);
+  seekToFrame(0);
+});
+
+function drawCurrentFrame() {
+  frameCtx.drawImage(frameVideoEl, 0, 0, frameCanvas.width, frameCanvas.height);
+}
+
+frameVideoEl.addEventListener('seeked', drawCurrentFrame);
+
+function seekToFrame(frame) {
+  frame = Math.min(Math.max(0, frame), frameTotal);
+  frameSlider.value = frame;
+  frameNumber.value = frame;
+  frameHint.textContent = `Frame ${frame} / ${frameTotal} (${formatTime(frame / FRAME_FPS)})`;
+  frameVideoEl.currentTime = frame / FRAME_FPS;
+}
+
+document.getElementById('frame-video-select').addEventListener('change', (e) => loadFrameVideo(e.target.value));
+frameSlider.addEventListener('input', () => seekToFrame(parseInt(frameSlider.value, 10)));
+frameNumber.addEventListener('input', () => {
+  if (frameNumber.value === '') return;
+  seekToFrame(parseInt(frameNumber.value, 10) || 0);
+});
+
+saveFrameBtn.addEventListener('click', () => {
+  const errorEl = document.getElementById('frame-error');
+  errorEl.textContent = '';
+  const videoName = document.getElementById('frame-video-select').value;
+  const frame = parseInt(frameSlider.value, 10);
+  const baseName = videoName.replace(/\.[^.]+$/, '');
+  frameCanvas.toBlob(async (blob) => {
+    if (!blob) { errorEl.textContent = 'Could not capture frame'; return; }
+    const formData = new FormData();
+    formData.append('file', blob, `${baseName}_frame${frame}.jpg`);
+    try {
+      const result = await api('/api/upload', { method: 'POST', body: formData });
+      await refreshInputs(result.filename);
+      logLine(`Saved frame ${frame} of ${videoName} -> inputs/${result.filename}`);
+    } catch (e) {
+      errorEl.textContent = e.message;
+      logLine(`Save frame error: ${e.message}`);
+    }
+  }, 'image/jpeg', 0.92);
+});
+// ------------------------------------------------------------------------
 
 document.getElementById('prompt').addEventListener('input', (e) => {
   document.getElementById('prompt-count').textContent = e.target.value.length;
