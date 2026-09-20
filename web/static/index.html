@@ -137,8 +137,7 @@
   }
 
   .video-box { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #000; }
-  video { width: 100%; display: block; max-height: 320px; background: #000; }
-  video[hidden] { display: none; }
+  .video-box video { width: 100%; display: block; max-height: 320px; background: #000; }
   .video-meta { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); padding: 8px 2px 0; }
 
   .progress-row { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 8px; }
@@ -313,15 +312,33 @@ function setPill(state, text) {
   document.getElementById('status-pill-text').textContent = text;
 }
 
-function populateSelect(select, files, previous) {
+function formatTime(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function populateSelect(select, files, previous, placeholder) {
   select.innerHTML = '';
+  if (placeholder) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = placeholder;
+    select.appendChild(opt);
+  }
   for (const name of files) {
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = name;
     select.appendChild(opt);
   }
-  if (previous && files.includes(previous)) select.value = previous;
+  if (previous && files.includes(previous)) {
+    select.value = previous;
+  } else if (placeholder) {
+    // Without a placeholder, leave the browser's default auto-selection (the
+    // first real file) in place -- callers without one (image/video pickers)
+    // rely on that to auto-select when nothing was previously chosen.
+    select.value = '';
+  }
 }
 
 function updateImageHint() {
@@ -367,14 +384,11 @@ async function refreshOutputs() {
   // newest video (unlike the player above): the user picks a video here explicitly
   // when they want to grab a frame from it, not every time a new one finishes.
   const frameSelect = document.getElementById('frame-video-select');
-  const previous = frameSelect.value;
-  populateSelect(frameSelect, files, previous);
-  frameSelect.insertAdjacentHTML('afterbegin', '<option value="">Select a video&hellip;</option>');
-  frameSelect.value = previous && files.includes(previous) ? previous : '';
+  populateSelect(frameSelect, files, frameSelect.value, 'Select a video…');
 }
 
 function loadVideo(name) {
-  document.getElementById('video-player').src = name ? '/outputs/' + name : '';
+  document.getElementById('video-player').src = name ? '/outputs/' + encodeURIComponent(name) : '';
   document.getElementById('video-name').textContent = name || '—';
   document.getElementById('video-duration').textContent = '';
 }
@@ -384,8 +398,7 @@ document.getElementById('image-select').addEventListener('change', updateImageHi
 document.getElementById('video-select').addEventListener('change', (e) => loadVideo(e.target.value));
 
 document.getElementById('video-player').addEventListener('loadedmetadata', (e) => {
-  const d = Math.round(e.target.duration);
-  document.getElementById('video-duration').textContent = `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
+  document.getElementById('video-duration').textContent = formatTime(e.target.duration);
 });
 
 // --- Frame extraction -------------------------------------------------
@@ -403,11 +416,6 @@ const frameNumber = document.getElementById('frame-number');
 const frameEmptyHint = document.getElementById('frame-empty-hint');
 const frameHint = document.getElementById('frame-hint');
 const saveFrameBtn = document.getElementById('save-frame-btn');
-
-function formatTime(seconds) {
-  const s = Math.max(0, seconds);
-  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-}
 
 function setFrameControlsEnabled(enabled) {
   frameSlider.disabled = !enabled;
@@ -445,12 +453,18 @@ function drawCurrentFrame() {
 
 frameVideoEl.addEventListener('seeked', drawCurrentFrame);
 
+// Seeking a real <video> is not free (decode + repaint), and 'input' fires on every
+// slider-drag tick or keystroke -- debounce the actual seek so only the last one in a
+// burst runs, while the label still updates immediately for responsiveness.
+let seekDebounceTimer = null;
+
 function seekToFrame(frame) {
   frame = Math.min(Math.max(0, frame), frameTotal);
   frameSlider.value = frame;
   frameNumber.value = frame;
   frameHint.textContent = `Frame ${frame} / ${frameTotal} (${formatTime(frame / FRAME_FPS)})`;
-  frameVideoEl.currentTime = frame / FRAME_FPS;
+  clearTimeout(seekDebounceTimer);
+  seekDebounceTimer = setTimeout(() => { frameVideoEl.currentTime = frame / FRAME_FPS; }, 120);
 }
 
 document.getElementById('frame-video-select').addEventListener('change', (e) => loadFrameVideo(e.target.value));

@@ -72,10 +72,12 @@ def test_h3_backend_generate_raises_checkpoint_error_before_not_implemented(tmp_
         )
 
 
-def test_h3_backend_generate_raises_for_missing_fixed_models(tmp_path, monkeypatch):
+@pytest.mark.parametrize("image_path", [ASSET_IMAGE, None], ids=["image-to-video", "text-to-video"])
+def test_h3_backend_generate_raises_for_missing_fixed_models(tmp_path, monkeypatch, image_path):
     # This dev/test machine doesn't have the fixed Qwen/VAE weights (only present on
     # RunPod after `make fetch-stock`) — generate() should fail clearly on that, not
-    # with an opaque traceback from deep inside comfy.
+    # with an opaque traceback from deep inside comfy. Both modes must reach this same
+    # point in generate() (past checkpoint validation, past the image/no-image branch).
     monkeypatch.setattr(h3, "MODELS_ROOT", str(tmp_path / "no_models_here"))
     monkeypatch.setattr(h3, "QWEN_ENCODER_PATH", f"{h3.MODELS_ROOT}/text_encoders/qwen.safetensors")
     monkeypatch.setattr(h3, "VIDEO_VAE_PATH", f"{h3.MODELS_ROOT}/vae/video.safetensors")
@@ -86,26 +88,7 @@ def test_h3_backend_generate_raises_for_missing_fixed_models(tmp_path, monkeypat
     with pytest.raises(FileNotFoundError, match="Qwen"):
         h3.H3Backend().generate(
             model_path=good_path,
-            image_path=ASSET_IMAGE,
-            prompt="p",
-            output_path=tmp_path / "out.mp4",
-        )
-
-
-def test_h3_backend_generate_without_image_raises_for_missing_fixed_models(tmp_path, monkeypatch):
-    # Same as above, but with no image_path at all -- text-to-video must reach the same
-    # point in generate() (past checkpoint validation, past the image/no-image branch)
-    # without ever touching the filesystem for an image.
-    monkeypatch.setattr(h3, "MODELS_ROOT", str(tmp_path / "no_models_here"))
-    monkeypatch.setattr(h3, "QWEN_ENCODER_PATH", f"{h3.MODELS_ROOT}/text_encoders/qwen.safetensors")
-    monkeypatch.setattr(h3, "VIDEO_VAE_PATH", f"{h3.MODELS_ROOT}/vae/video.safetensors")
-    monkeypatch.setattr(h3, "AUDIO_VAE_PATH", f"{h3.MODELS_ROOT}/vae/audio.safetensors")
-
-    good_path = tmp_path / "good.safetensors"
-    write_safetensors(good_path, h3_shaped_header(), data=b"\x00" * 4)
-    with pytest.raises(FileNotFoundError, match="Qwen"):
-        h3.H3Backend().generate(
-            model_path=good_path,
+            image_path=image_path,
             prompt="p",
             output_path=tmp_path / "out.mp4",
         )
