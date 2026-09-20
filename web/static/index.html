@@ -91,8 +91,15 @@
     pointer-events: none; color: var(--muted); font-size: 0.75rem;
   }
 
-  .row-upload { display: flex; gap: 8px; }
+  .row-upload { display: flex; gap: 8px; align-items: center; }
   .row-upload .select-wrap { flex: 1; }
+
+  .thumb {
+    flex: 0 0 auto; width: 40px; height: 40px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--input-bg);
+    object-fit: cover; display: none;
+  }
+  .thumb.visible { display: block; }
 
   .subtext { margin-top: 10px; font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .subtext .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--busy); flex: none; }
@@ -173,6 +180,7 @@
       </div>
       <label class="btn" for="upload-file">Upload</label>
       <input type="file" id="upload-file" accept="image/*" hidden>
+      <img class="thumb" id="image-thumb" alt="">
     </div>
     <div class="subtext"><span class="dot"></span><span id="image-hint">No image uploaded yet</span></div>
     <div class="field-error" id="upload-error"></div>
@@ -283,6 +291,15 @@ function updateImageHint() {
   const select = document.getElementById('image-select');
   document.getElementById('image-hint').textContent =
     select.value ? `${select.value} selected` : 'No image uploaded yet';
+
+  const thumb = document.getElementById('image-thumb');
+  if (select.value) {
+    thumb.src = '/inputs/' + encodeURIComponent(select.value);
+    thumb.classList.add('visible');
+  } else {
+    thumb.removeAttribute('src');
+    thumb.classList.remove('visible');
+  }
 }
 
 async function refreshInputs(selectName) {
