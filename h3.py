@@ -340,6 +340,10 @@ class MockH3Backend:
     ):
         report = _reporter(progress_callback)
         validate_prompt(prompt)
+        logger.info(
+            "Mock generate: model=%s image=%s prompt=%r frames=%d steps=%d seed=%d",
+            model_path, image_path or "(none — text-to-video)", prompt, frames, steps, seed,
+        )
 
         report(0.0, "loading models")
         report(0.1, "encoding prompt and image" if image_path else "encoding prompt")
@@ -349,6 +353,7 @@ class MockH3Backend:
         report(0.95, "writing output")
 
         Path(output_path).write_bytes(b"MOCK MP4 OUTPUT - not a real video\n")
+        logger.info("Mock output written: %s", output_path)
 
         report(1.0, "done")
 
@@ -361,6 +366,7 @@ def _import_comfy():
             f"ComfyUI checkout not found at {COMFYUI_ROOT}. "
             "Clone it (see README) before using the real H3 backend."
         )
+    logger.info("Importing ComfyUI headlessly from %s", COMFYUI_ROOT)
     if COMFYUI_ROOT not in sys.path:
         sys.path.insert(0, COMFYUI_ROOT)
     import comfy.model_management
@@ -420,6 +426,7 @@ class H3Backend:
         else:
             image = None
             width, height = T2V_WIDTH, T2V_HEIGHT
+            logger.info("No image provided — using text-to-video canvas %dx%d", width, height)
         for path, what in (
             (QWEN_ENCODER_PATH, "Fixed Qwen text/vision encoder"),
             (VIDEO_VAE_PATH, "Fixed video VAE"),
@@ -427,10 +434,17 @@ class H3Backend:
         ):
             _require_file(path, what)
 
+        logger.info(
+            "Generating %s: model=%s canvas=%dx%d frames=%d steps=%d seed=%d sampler=%s/%s cfg=%s",
+            "image-to-video" if image is not None else "text-to-video",
+            model_path, width, height, frames, steps, seed, SAMPLER_NAME, SCHEDULER, CFG,
+        )
+
         report(0.0, "loading models")
         sd, sample, utils, model_management, nodes, MiniMaxH3ImageToVideo, vae_decode_audio = _import_comfy()
         import numpy as np
         import torch
+        torch.cuda.reset_peak_memory_stats()
 
         # ComfyUI's own execution engine (execution.py) wraps every node call in
         # torch.inference_mode(); calling node classes directly (headless, no
@@ -482,6 +496,7 @@ class H3Backend:
             # leaving the ~20GB DiT no room to fully load — see objective.md's GPU memory
             # lifecycle (Qwen -> encode -> offload -> DiT inference). 32GB VRAM is tight
             # enough that this isn't optional: without it, denoising OOMs on the first step.
+            logger.info("Offloading Qwen and video VAE to free VRAM for the DiT")
             model_management.unload_all_models()
 
             def sampler_callback(step, x0, x, total_steps):
@@ -497,6 +512,7 @@ class H3Backend:
             )
 
             report(0.9, "decoding")
+            logger.info("Offloading the DiT to free VRAM for VAE decode")
             model_management.unload_all_models()  # DiT no longer needed; give the VAEs full room
             video_latent = denoised.unbind()[0]
             video_images = nodes.VAEDecode().decode(video_vae, {"samples": video_latent})[0]
@@ -513,6 +529,7 @@ class H3Backend:
             channels = pcm.shape[0]
             pcm_bytes = pcm.T.copy().tobytes()  # interleave channels for the WAV container
 
+        logger.info("Peak VRAM: %.1fGB", torch.cuda.max_memory_allocated() / 1e9)
         report(0.95, "writing output")
         mux_mp4(pixel_frames, width, height, FPS, pcm_bytes, audio["sample_rate"], output_path, channels=channels)
 

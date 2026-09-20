@@ -83,6 +83,8 @@ def main(argv=None):
     print(f"Seed: {args.seed}")
     print()
 
+    if args.mock:
+        logger.warning("Using mock backend — output is a placeholder, not a real generation")
     backend = h3.MockH3Backend() if args.mock else h3.H3Backend()
 
     def progress_callback(progress, message):
