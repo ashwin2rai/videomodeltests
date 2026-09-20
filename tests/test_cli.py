@@ -20,6 +20,11 @@ def test_defaults():
     assert args.mock is False
 
 
+def test_image_is_optional():
+    args = generate.parse_args(["--model", "m.safetensors", "--prompt", "p", "--output", "out.mp4"])
+    assert args.image is None
+
+
 def test_invalid_duration_rejected():
     with pytest.raises(SystemExit):
         generate.parse_args(

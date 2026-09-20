@@ -90,3 +90,33 @@ def test_h3_backend_generate_raises_for_missing_fixed_models(tmp_path, monkeypat
             prompt="p",
             output_path=tmp_path / "out.mp4",
         )
+
+
+def test_h3_backend_generate_without_image_raises_for_missing_fixed_models(tmp_path, monkeypatch):
+    # Same as above, but with no image_path at all -- text-to-video must reach the same
+    # point in generate() (past checkpoint validation, past the image/no-image branch)
+    # without ever touching the filesystem for an image.
+    monkeypatch.setattr(h3, "MODELS_ROOT", str(tmp_path / "no_models_here"))
+    monkeypatch.setattr(h3, "QWEN_ENCODER_PATH", f"{h3.MODELS_ROOT}/text_encoders/qwen.safetensors")
+    monkeypatch.setattr(h3, "VIDEO_VAE_PATH", f"{h3.MODELS_ROOT}/vae/video.safetensors")
+    monkeypatch.setattr(h3, "AUDIO_VAE_PATH", f"{h3.MODELS_ROOT}/vae/audio.safetensors")
+
+    good_path = tmp_path / "good.safetensors"
+    write_safetensors(good_path, h3_shaped_header(), data=b"\x00" * 4)
+    with pytest.raises(FileNotFoundError, match="Qwen"):
+        h3.H3Backend().generate(
+            model_path=good_path,
+            prompt="p",
+            output_path=tmp_path / "out.mp4",
+        )
+
+
+def test_h3_backend_generate_rejects_empty_prompt(tmp_path):
+    # Prompt is validated before the checkpoint even gets opened -- a nonexistent
+    # checkpoint path proves this raises for the *prompt*, not something else.
+    with pytest.raises(ValueError, match="Prompt"):
+        h3.H3Backend().generate(
+            model_path=tmp_path / "missing.safetensors",
+            prompt="   ",
+            output_path=tmp_path / "out.mp4",
+        )

@@ -139,6 +139,61 @@ def test_mock_backend_progress_callback_events(tmp_path):
     assert events[-1] == (1.0, "done")
 
 
+def test_mock_backend_generate_without_image(tmp_path):
+    events = []
+    backend = h3.MockH3Backend()
+    backend.load()
+    backend.generate(
+        model_path="fake.safetensors",
+        prompt="p",
+        output_path=tmp_path / "out.mp4",
+        progress_callback=lambda progress, message: events.append((progress, message)),
+    )
+    assert (tmp_path / "out.mp4").exists()
+    assert events[1] == (0.1, "encoding prompt")  # no "and image" -- no image was given
+
+
+def test_mock_backend_generate_rejects_empty_prompt(tmp_path):
+    backend = h3.MockH3Backend()
+    with pytest.raises(ValueError, match="Prompt"):
+        backend.generate(
+            model_path="fake.safetensors",
+            prompt="   ",
+            output_path=tmp_path / "out.mp4",
+        )
+
+
+def test_mock_cli_text_to_video_omits_image(tmp_path, capsys):
+    output = tmp_path / "out.mp4"
+    rc = generate.main(
+        [
+            "--mock",
+            "--model", "fake.safetensors",
+            "--prompt", "A calm ocean at sunset.",
+            "--output", str(output),
+        ]
+    )
+    assert rc == 0
+    assert list(tmp_path.glob("out_*.mp4"))
+    out = capsys.readouterr().out
+    assert "Input: (none — text-to-video)" in out
+    assert f"Canvas: {h3.T2V_WIDTH}x{h3.T2V_HEIGHT}" in out
+
+
+def test_cli_rejects_empty_prompt(tmp_path, capsys):
+    output = tmp_path / "out.mp4"
+    rc = generate.main(
+        [
+            "--mock",
+            "--model", "fake.safetensors",
+            "--prompt", "   ",
+            "--output", str(output),
+        ]
+    )
+    assert rc != 0
+    assert "Error" in capsys.readouterr().err
+
+
 def test_duration_presets_land_on_valid_frame_grid():
     for duration, frames in h3.DURATION_PRESETS.items():
         assert (frames - 5) % 17 == 0, f"{duration}s -> {frames} frames is not on the 17k+5 grid"

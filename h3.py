@@ -98,6 +98,11 @@ def compute_resolution(width, height, short_edge=SHORT_EDGE, alignment=ALIGNMENT
     )
 
 
+# Canvas used for text-to-video (no input image to derive an aspect ratio from).
+# H3's own ComfyUI node defaults to the same 16:9 values for this case.
+T2V_WIDTH, T2V_HEIGHT = compute_resolution(16, 9)
+
+
 def _require_file(path, what):
     path = Path(path)
     if not path.is_file():
@@ -111,6 +116,11 @@ def timestamped_output_path(path):
     path = Path(path)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return path.with_name(f"{path.stem}_{timestamp}{path.suffix}")
+
+
+def validate_prompt(prompt):
+    if not prompt or not prompt.strip():
+        raise ValueError("Prompt is required and cannot be empty")
 
 
 def validate_image(path):
@@ -320,18 +330,19 @@ class MockH3Backend:
     def generate(
         self,
         model_path,
-        image_path,
         prompt,
         output_path,
+        image_path=None,
         seed=DEFAULT_SEED,
         steps=DEFAULT_STEPS,
         frames=DURATION_PRESETS[DEFAULT_DURATION],
         progress_callback=None,
     ):
         report = _reporter(progress_callback)
+        validate_prompt(prompt)
 
         report(0.0, "loading models")
-        report(0.1, "encoding prompt and image")
+        report(0.1, "encoding prompt and image" if image_path else "encoding prompt")
         for i in range(1, steps + 1):
             report(0.1 + 0.7 * (i / steps), f"generating: {i}/{steps}")
         report(0.9, "decoding")
@@ -391,9 +402,9 @@ class H3Backend:
     def generate(
         self,
         model_path,
-        image_path,
         prompt,
         output_path,
+        image_path=None,
         seed=DEFAULT_SEED,
         steps=DEFAULT_STEPS,
         frames=DURATION_PRESETS[DEFAULT_DURATION],
@@ -401,9 +412,14 @@ class H3Backend:
     ):
         report = _reporter(progress_callback)
 
+        validate_prompt(prompt)
         validate_checkpoint(model_path)
-        image = preprocess_image(image_path)
-        width, height = image.size
+        if image_path:
+            image = preprocess_image(image_path)
+            width, height = image.size
+        else:
+            image = None
+            width, height = T2V_WIDTH, T2V_HEIGHT
         for path, what in (
             (QWEN_ENCODER_PATH, "Fixed Qwen text/vision encoder"),
             (VIDEO_VAE_PATH, "Fixed video VAE"),
@@ -446,8 +462,10 @@ class H3Backend:
 
             clip, video_vae, audio_vae, model = self._qwen, self._video_vae, self._audio_vae, self._dit_model
 
-            report(0.1, "encoding prompt and image")
-            image_tensor = torch.from_numpy(np.array(image).astype(np.float32) / 255.0)[None, ...]
+            report(0.1, "encoding prompt and image" if image is not None else "encoding prompt")
+            image_tensor = None
+            if image is not None:
+                image_tensor = torch.from_numpy(np.array(image).astype(np.float32) / 255.0)[None, ...]
             positive, latent = MiniMaxH3ImageToVideo.execute(
                 clip=clip,
                 vae=video_vae,

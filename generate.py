@@ -16,9 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="MiniMax H3 image-to-video generation")
+    parser = argparse.ArgumentParser(
+        description="MiniMax H3 video generation (image-to-video, or text-to-video if --image is omitted)"
+    )
     parser.add_argument("--model", required=True)
-    parser.add_argument("--image", required=True)
+    parser.add_argument("--image", default=None, help="Optional; omit for text-to-video")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=h3.DEFAULT_SEED)
@@ -40,15 +42,19 @@ def fail(message):
 def main(argv=None):
     args = parse_args(argv)
 
-    image_arg = Path(args.image)
-    if image_arg.parent == Path("."):  # bare filename: default into inputs/
-        image_arg = Path("inputs") / image_arg
-    args.image = str(image_arg)
+    if args.image:
+        image_arg = Path(args.image)
+        if image_arg.parent == Path("."):  # bare filename: default into inputs/
+            image_arg = Path("inputs") / image_arg
+        args.image = str(image_arg)
 
-    try:
-        width, height = h3.validate_image(args.image)
-    except (FileNotFoundError, ValueError) as e:
-        return fail(e)
+        try:
+            width, height = h3.validate_image(args.image)
+        except (FileNotFoundError, ValueError) as e:
+            return fail(e)
+        canvas_w, canvas_h = h3.compute_resolution(width, height)
+    else:
+        canvas_w, canvas_h = h3.T2V_WIDTH, h3.T2V_HEIGHT
 
     if not args.mock and not Path(args.model).is_file():
         return fail(f"Checkpoint not found: {args.model}")
@@ -64,13 +70,12 @@ def main(argv=None):
     except OSError as e:
         return fail(e)
 
-    canvas_w, canvas_h = h3.compute_resolution(width, height)
     frames = h3.DURATION_PRESETS[args.duration]
 
     print("MiniMax H3")
     print()
     print(f"Model: {args.model}")
-    print(f"Input: {args.image}")
+    print(f"Input: {args.image or '(none — text-to-video)'}")
     print(f"Output: {output_path}")
     print(f"Canvas: {canvas_w}x{canvas_h}")
     print(f"Frames: {frames} (~{frames / h3.FPS:.1f}s)")
