@@ -82,7 +82,7 @@ def _worker_loop():
         try:
             backend.generate(
                 model_path=model_path,
-                image_path=str(INPUTS_DIR / job["image"]),
+                image_path=str(INPUTS_DIR / job["image"]) if job["image"] else None,
                 prompt=job["prompt"],
                 output_path=output_path,
                 seed=job["seed"],
@@ -159,7 +159,7 @@ def enqueue():
         return jsonify({"error": backend_error or "Backend is not ready"}), 503
 
     data = request.get_json(force=True, silent=True) or {}
-    image = data.get("image")
+    image = (data.get("image") or "").strip() or None  # empty/absent -> text-to-video
     prompt = (data.get("prompt") or "").strip()
     try:
         duration = float(data.get("duration", h3.DEFAULT_DURATION))
@@ -168,7 +168,7 @@ def enqueue():
     except (TypeError, ValueError):
         return jsonify({"error": "duration/steps/seed must be numbers"}), 400
 
-    if not image or not (INPUTS_DIR / image).is_file():
+    if image and not (INPUTS_DIR / image).is_file():
         return jsonify({"error": f"Image not found: {image}"}), 400
     if not prompt:
         return jsonify({"error": "Prompt is required"}), 400

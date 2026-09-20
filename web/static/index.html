@@ -344,7 +344,7 @@ function populateSelect(select, files, previous, placeholder) {
 function updateImageHint() {
   const select = document.getElementById('image-select');
   document.getElementById('image-hint').textContent =
-    select.value ? `${select.value} selected` : 'No image uploaded yet';
+    select.value ? `${select.value} selected` : 'Text-to-video (no image)';
 
   const thumb = document.getElementById('image-thumb');
   if (select.value) {
@@ -359,7 +359,15 @@ function updateImageHint() {
 async function refreshInputs(selectName) {
   const select = document.getElementById('image-select');
   const files = await api('/api/inputs');
+  // No placeholder here -- populateSelect() defaults to the first real file when
+  // nothing was previously chosen, so uploading/starting up still prefers an existing
+  // image over "None". The "None" option is appended after, leaving that default alone;
+  // picking it explicitly is the only way to get text-to-video from the UI.
   populateSelect(select, files, selectName || select.value);
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = 'None (text-to-video)';
+  select.appendChild(noneOpt);
   updateImageHint();
 }
 
@@ -526,12 +534,11 @@ document.getElementById('upload-file').addEventListener('change', async () => {
 document.getElementById('generate-btn').addEventListener('click', async () => {
   const errorEl = document.getElementById('queue-error');
   errorEl.textContent = '';
-  const image = document.getElementById('image-select').value;
+  const image = document.getElementById('image-select').value || null;  // '' -> text-to-video
   const prompt = document.getElementById('prompt').value.trim();
   const duration = parseFloat(document.getElementById('duration').value);
   const steps = parseInt(document.getElementById('steps').value, 10);
   const seed = parseInt(document.getElementById('seed').value, 10);
-  if (!image) { errorEl.textContent = 'No input image selected'; return; }
   if (!prompt) { errorEl.textContent = 'Prompt is required'; return; }
   try {
     await api('/api/queue', {

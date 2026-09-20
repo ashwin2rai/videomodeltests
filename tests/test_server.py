@@ -139,6 +139,26 @@ def test_enqueue_missing_image(client):
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize("image", [None, "", "   "], ids=["absent", "empty", "whitespace"])
+def test_enqueue_without_image_runs_text_to_video(client, isolated_dirs, image):
+    _, outputs = isolated_dirs
+    # Track the id of whatever job (if any) a previous test already left as "done" --
+    # otherwise is_done() below could pass immediately on that stale state before this
+    # test's own job has even been picked up by the shared worker thread.
+    before = client.get("/api/status").get_json()["current_job"]
+    before_id = before["id"] if before else 0
+
+    resp = client.post("/api/queue", json={"image": image, "prompt": "a sunset", "duration": 5, "steps": 1, "seed": 1})
+    assert resp.status_code == 200
+
+    def is_done():
+        job = client.get("/api/status").get_json()["current_job"]
+        return job is not None and job["id"] > before_id and job["status"] == "done"
+
+    wait_until(is_done)
+    assert list(outputs.iterdir())  # mock backend still writes an output with no image
+
+
 def test_enqueue_missing_prompt(client, isolated_dirs):
     image = upload_asset(client)
     resp = client.post("/api/queue", json={"image": image, "prompt": "  ", "duration": 5})
