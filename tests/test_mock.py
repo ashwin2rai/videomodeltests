@@ -40,6 +40,23 @@ def test_compute_resolution_never_exceeds_pixel_budget():
         assert w * h <= max_pixels * 1.01  # rounding to the alignment grid can push slightly over
 
 
+@pytest.mark.parametrize(
+    "width,height,expected",
+    [
+        (1920, 1080, (896, 512)),  # 16:9
+        (1080, 1920, (512, 896)),  # 9:16
+        (1000, 1000, (512, 512)),  # 1:1
+    ],
+)
+def test_compute_resolution_at_fast_preset(width, height, expected):
+    assert h3.compute_resolution(width, height, 512) == expected
+
+
+def test_resolution_presets_are_alignment_multiples():
+    for short_edge in h3.RESOLUTION_PRESETS:
+        assert short_edge % h3.ALIGNMENT == 0
+
+
 def test_validate_image_accepts_real_image():
     width, height = h3.validate_image(ASSET_IMAGE)
     assert (width, height) == (64, 64)

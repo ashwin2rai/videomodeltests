@@ -34,6 +34,12 @@ def parse_args(argv=None):
         choices=duration_choices, metavar=duration_metavar,
         help="Approximate video duration in seconds",
     )
+    resolution_choices = sorted(h3.RESOLUTION_PRESETS)
+    parser.add_argument(
+        "--resolution", type=int, default=h3.DEFAULT_RESOLUTION,
+        choices=resolution_choices, metavar="{" + ",".join(str(r) for r in resolution_choices) + "}",
+        help="Short-edge resolution in px — lower is faster, lower quality",
+    )
     parser.add_argument("--mock", action="store_true", help="Use the mock backend (development only)")
     return parser.parse_args(argv)
 
@@ -56,9 +62,9 @@ def main(argv=None):
             width, height = h3.validate_image(args.image)
         except (FileNotFoundError, ValueError) as e:
             return fail(e)
-        canvas_w, canvas_h = h3.compute_resolution(width, height)
+        canvas_w, canvas_h = h3.compute_resolution(width, height, args.resolution)
     else:
-        canvas_w, canvas_h = h3.T2V_WIDTH, h3.T2V_HEIGHT
+        canvas_w, canvas_h = h3.compute_resolution(16, 9, args.resolution)
 
     if not args.mock and not Path(args.model).is_file():
         return fail(f"Checkpoint not found: {args.model}")
@@ -81,7 +87,7 @@ def main(argv=None):
     print(f"Model: {args.model}")
     print(f"Input: {args.image or '(none — text-to-video)'}")
     print(f"Output: {output_path}")
-    print(f"Canvas: {canvas_w}x{canvas_h}")
+    print(f"Canvas: {canvas_w}x{canvas_h} ({args.resolution}px short edge)")
     print(f"Frames: {frames} (~{frames / h3.FPS:.1f}s)")
     print(f"Steps: {args.steps}")
     print(f"Seed: {args.seed}")
@@ -109,6 +115,7 @@ def main(argv=None):
             seed=args.seed,
             steps=args.steps,
             frames=frames,
+            short_edge=args.resolution,
             progress_callback=progress_callback,
         )
         t_done = time.perf_counter()

@@ -88,6 +88,7 @@ def _worker_loop():
                 seed=job["seed"],
                 steps=job["steps"],
                 frames=h3.DURATION_PRESETS[job["duration"]],
+                short_edge=job["resolution"],
                 progress_callback=progress_callback,
             )
         except Exception as e:
@@ -165,8 +166,9 @@ def enqueue():
         duration = float(data.get("duration", h3.DEFAULT_DURATION))
         steps = int(data.get("steps", h3.DEFAULT_STEPS))
         seed = int(data.get("seed", h3.DEFAULT_SEED))
+        resolution = int(data.get("resolution", h3.DEFAULT_RESOLUTION))
     except (TypeError, ValueError):
-        return jsonify({"error": "duration/steps/seed must be numbers"}), 400
+        return jsonify({"error": "duration/steps/seed/resolution must be numbers"}), 400
 
     if image and not (INPUTS_DIR / image).is_file():
         return jsonify({"error": f"Image not found: {image}"}), 400
@@ -174,8 +176,13 @@ def enqueue():
         return jsonify({"error": "Prompt is required"}), 400
     if duration not in h3.DURATION_PRESETS:
         return jsonify({"error": f"Invalid duration: {duration}"}), 400
+    if resolution not in h3.RESOLUTION_PRESETS:
+        return jsonify({"error": f"Invalid resolution: {resolution}"}), 400
 
-    job = {"image": image, "prompt": prompt, "duration": duration, "steps": steps, "seed": seed}
+    job = {
+        "image": image, "prompt": prompt, "duration": duration,
+        "steps": steps, "seed": seed, "resolution": resolution,
+    }
     try:
         job_queue.put_nowait(job)
     except queue.Full:

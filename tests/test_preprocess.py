@@ -31,6 +31,14 @@ def test_preprocess_respects_exif_orientation(tmp_path):
     assert img.size == h3.compute_resolution(50, 100)
 
 
+def test_preprocess_respects_resolution_preset(tmp_path):
+    path = tmp_path / "landscape.jpg"
+    Image.new("RGB", (1920, 1080), color=(10, 20, 30)).save(path)
+    img = h3.preprocess_image(path, short_edge=512)
+    assert img.size == h3.compute_resolution(1920, 1080, 512)
+    assert img.size == (896, 512)
+
+
 def test_t2v_default_canvas_matches_h3_node_default():
     # Confirmed against comfy_extras/nodes_minimax_h3.py's MiniMaxH3ImageToVideo schema
     # defaults (width=1344, height=768) and the official T2V workflow template.

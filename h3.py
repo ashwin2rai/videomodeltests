@@ -38,6 +38,15 @@ DEFAULT_STEPS = 20
 DURATION_PRESETS = {5.0: 124, 7.5: 175, 10.0: 243, 12.5: 294, 15.0: 362, 17.5: 413, 20.0: 481}
 DEFAULT_DURATION = 5.0
 
+# Resolution presets (short edge, px), not free-form width/height (see objective.md's
+# "Do not expose: ... arbitrary resolution"). 768 is H3's native/recommended short
+# edge; 512 cuts pixel (and latent-token) count by more than half for meaningfully
+# faster denoising/decode at some quality cost -- unverified on real output quality,
+# unlike the duration presets, since there's no formula to derive it from, only a
+# tradeoff to measure hands-on.
+RESOLUTION_PRESETS = (SHORT_EDGE, 512)
+DEFAULT_RESOLUTION = SHORT_EDGE
+
 # Sampling defaults, not exposed on the CLI (see objective.md). MiniMaxH3ImageToVideo
 # only produces a positive conditioning (no negative branch), which matches cfg=1.0 —
 # comfy.samplers skips evaluating the negative conditioning entirely at cfg==1.0, so
@@ -339,13 +348,14 @@ class MockH3Backend:
         seed=DEFAULT_SEED,
         steps=DEFAULT_STEPS,
         frames=DURATION_PRESETS[DEFAULT_DURATION],
+        short_edge=DEFAULT_RESOLUTION,
         progress_callback=None,
     ):
         report = _reporter(progress_callback)
         validate_prompt(prompt)
         logger.info(
-            "Mock generate: model=%s image=%s prompt=%r frames=%d steps=%d seed=%d",
-            model_path, image_path or "(none — text-to-video)", prompt, frames, steps, seed,
+            "Mock generate: model=%s image=%s prompt=%r frames=%d steps=%d seed=%d short_edge=%d",
+            model_path, image_path or "(none — text-to-video)", prompt, frames, steps, seed, short_edge,
         )
 
         report(0.0, "loading models")
@@ -417,6 +427,7 @@ class H3Backend:
         seed=DEFAULT_SEED,
         steps=DEFAULT_STEPS,
         frames=DURATION_PRESETS[DEFAULT_DURATION],
+        short_edge=DEFAULT_RESOLUTION,
         progress_callback=None,
     ):
         report = _reporter(progress_callback)
@@ -424,11 +435,11 @@ class H3Backend:
         validate_prompt(prompt)
         validate_checkpoint(model_path)
         if image_path:
-            image = preprocess_image(image_path)
+            image = preprocess_image(image_path, short_edge=short_edge)
             width, height = image.size
         else:
             image = None
-            width, height = T2V_WIDTH, T2V_HEIGHT
+            width, height = compute_resolution(16, 9, short_edge)
             logger.info("No image provided — using text-to-video canvas %dx%d", width, height)
         for path, what in (
             (QWEN_ENCODER_PATH, "Fixed Qwen text/vision encoder"),

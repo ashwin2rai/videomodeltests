@@ -43,7 +43,7 @@ uv run pytest -q
 
 `--mock` needs no CUDA, no model files, and no network access.
 
-Other optional flags (real or mock): `--seed` (default 42), `--steps` (default 20), `--duration` — one of `5, 7.5, 10, 12.5, 15, 17.5, 20` seconds (default 5; each maps internally to a fixed frame count, see `h3.DURATION_PRESETS`). Omit `--image` entirely for text-to-video.
+Other optional flags (real or mock): `--seed` (default 42), `--steps` (default 20), `--duration` — one of `5, 7.5, 10, 12.5, 15, 17.5, 20` seconds (default 5; each maps internally to a fixed frame count, see `h3.DURATION_PRESETS`), `--resolution` — `768` (default, native/recommended) or `512` (faster, lower quality — see `h3.RESOLUTION_PRESETS`). Omit `--image` entirely for text-to-video.
 
 ### Web UI
 
@@ -97,6 +97,7 @@ The DiT checkpoint is auto-discovered from `diffusion_models/` at startup — if
 UI features beyond the basic upload/prompt/generate flow:
 
 - **Text-to-video** — pick "None (text-to-video)" in the image dropdown instead of an uploaded image.
+- **Resolution knob** — `768px (default)` or `512px (fast)`, same two presets as the CLI's `--resolution`.
 - **Frame extractor** — pick any video already in `outputs/`, scrub to a frame, and save it straight back into `inputs/` as a new starting image (handy for chaining generations). The preview pillarboxes non-16:9 videos to show their real aspect ratio rather than stretching them.
 - **Thumbnails** — the input-image and output-video dropdowns show a preview thumbnail next to the current selection.
 
@@ -148,6 +149,8 @@ One community int8/ConvRot checkpoint has been verified end-to-end — see `obje
 First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (turbo checkpoint above) → 162.4s total (1.2s load + 161.2s generation). Full stage breakdown and peak VRAM/RAM aren't captured yet — see `objective/status.md`.
 
 `--duration` presets beyond 10s (12.5/15/17.5/20s) are new and unmeasured — the 10s preset alone already peaks at ~28GB VRAM on a 32GB card, so treat anything longer as untested on the 32GB target until it's been run and measured.
+
+The `512px (fast)` `--resolution` preset is also new and unmeasured on real hardware — it should meaningfully speed up denoising/decode and lower VRAM (roughly half the pixels of the 768px default), but neither the speedup nor the output quality has been verified hands-on yet.
 
 ### Troubleshooting: CUDA OOM
 

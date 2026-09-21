@@ -90,7 +90,10 @@ def upload_asset(client):
 
 
 def make_job(image, prompt):
-    return {"image": image, "prompt": prompt, "duration": 5.0, "steps": 1, "seed": 1}
+    return {
+        "image": image, "prompt": prompt, "duration": 5.0,
+        "steps": 1, "seed": 1, "resolution": h3.DEFAULT_RESOLUTION,
+    }
 
 
 def test_index_serves_html(client):
@@ -169,6 +172,34 @@ def test_enqueue_invalid_duration(client, isolated_dirs):
     image = upload_asset(client)
     resp = client.post("/api/queue", json={"image": image, "prompt": "hello", "duration": 6})
     assert resp.status_code == 400
+
+
+def test_enqueue_invalid_resolution(client, isolated_dirs):
+    image = upload_asset(client)
+    resp = client.post("/api/queue", json={"image": image, "prompt": "hello", "resolution": 600})
+    assert resp.status_code == 400
+
+
+def test_enqueue_accepts_fast_resolution_preset(client, isolated_dirs):
+    _, outputs = isolated_dirs
+    image = upload_asset(client)
+    # See test_enqueue_without_image_runs_text_to_video above: track the previous job's
+    # id so is_done() below can't pass on stale state left by an earlier test.
+    before = client.get("/api/status").get_json()["current_job"]
+    before_id = before["id"] if before else 0
+
+    resp = client.post(
+        "/api/queue",
+        json={"image": image, "prompt": "hello", "steps": 1, "seed": 1, "resolution": 512},
+    )
+    assert resp.status_code == 200
+
+    def is_done():
+        job = client.get("/api/status").get_json()["current_job"]
+        return job is not None and job["id"] > before_id and job["status"] == "done"
+
+    wait_until(is_done)
+    assert list(outputs.iterdir())
 
 
 def test_enqueue_rejects_when_backend_not_ready(client, monkeypatch):

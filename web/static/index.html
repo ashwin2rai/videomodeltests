@@ -104,8 +104,8 @@
   .subtext { margin-top: 10px; font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .subtext .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--busy); flex: none; }
 
-  .knobs { display: flex; gap: 10px; }
-  .knobs > div { flex: 1; }
+  .knobs { display: flex; flex-wrap: wrap; gap: 10px; }
+  .knobs > div { flex: 1; min-width: 110px; }
   .knobs label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
   .seed-row { display: flex; gap: 6px; }
 
@@ -221,6 +221,16 @@
             <option value="15">15 sec</option>
             <option value="17.5">17.5 sec</option>
             <option value="20">20 sec</option>
+          </select>
+          <span class="chevron">&#9662;</span>
+        </div>
+      </div>
+      <div>
+        <label>Resolution</label>
+        <div class="select-wrap">
+          <select id="resolution">
+            <option value="768">768px (default)</option>
+            <option value="512">512px (fast)</option>
           </select>
           <span class="chevron">&#9662;</span>
         </div>
@@ -548,12 +558,13 @@ document.getElementById('generate-btn').addEventListener('click', async () => {
   const duration = parseFloat(document.getElementById('duration').value);
   const steps = parseInt(document.getElementById('steps').value, 10);
   const seed = parseInt(document.getElementById('seed').value, 10);
+  const resolution = parseInt(document.getElementById('resolution').value, 10);
   if (!prompt) { errorEl.textContent = 'Prompt is required'; return; }
   try {
     await api('/api/queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, prompt, duration, steps, seed }),
+      body: JSON.stringify({ image, prompt, duration, steps, seed, resolution }),
     });
     logLine(`Queued: "${prompt}"`);
   } catch (e) {
