@@ -156,6 +156,17 @@ First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (tur
 
 The `512px (fast)` `--resolution` preset is also new and unmeasured on real hardware — it should meaningfully speed up denoising/decode and lower VRAM (roughly half the pixels of the 768px default), but neither the speedup nor the output quality has been verified hands-on yet.
 
+### Docker (for a RunPod template)
+
+```bash
+docker build -t h3-test .
+docker run --gpus all -p 8000:8000 -e DIT_URL=<url-to-your-DiT-checkpoint> h3-test
+```
+
+The image contains everything needed to serve the UI and run real generation — the pinned ComfyUI checkout, the `gpu` dependency group, ffmpeg — **except model weights**. `scripts/docker-entrypoint.sh` (the image's `ENTRYPOINT`) fetches the fixed stock models on every container start, and the DiT checkpoint too if `DIT_URL` is set (optionally with `DIT_NAME` to name the file). This is a deliberate choice, not an oversight: there is **no persistent volume**, so weights land on the container's own ephemeral disk and a fresh container genuinely re-downloads them every time — accepted as the price of a simpler deployment (see `objective/status.md`). Set `HF_TOKEN` for authenticated Hugging Face requests; `HF_XET_HIGH_PERFORMANCE` auto-enables on boxes with enough RAM (see the "Fast downloads" section above) — both pass straight through as normal `docker run -e` env vars.
+
+`CMD` defaults to `serve` (the real backend); other entrypoint modes: `serve-mock` (no GPU/weights needed, for testing the image itself), `check` (runs `scripts/check_env.py` and exits), `bash` (a shell, for debugging — e.g. `docker run --gpus all -it h3-test bash`). On RunPod, set the Container Disk size well above the image size plus ~90GB (stock models + a DiT checkpoint) since everything shares that one ephemeral disk, expose the container's port (`PORT`, default 8000) as an HTTP service, and set `DIT_URL` as a template env var.
+
 ### Troubleshooting: CUDA OOM
 
 `generate.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` itself (an explicit shell value always wins) — without it, denoising can OOM on a 32GB card from allocator fragmentation even when the model fits. If you still hit CUDA OOM:

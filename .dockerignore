@@ -1,0 +1,25 @@
+.git
+.github
+
+# Docs -- not needed at runtime
+objective/
+README.md
+LICENSE
+
+# Local dev/test-only, not needed at runtime (also excludes pytest fixtures)
+tests/
+scripts/pre-commit
+
+# Local dev artifacts that must never be baked into the image
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+inputs/
+outputs/
+.env
+
+Dockerfile
+.dockerignore
