@@ -1,15 +1,11 @@
 # videomodeltests
 
-Minimal CLI + a lightweight web UI for MiniMax H3 (FL2VA) image-to-video + audio generation, targeting a single RTX 5090. See `objective/objective.md` for the CLI's full spec, `objective/ui.md` for the web UI's, and `objective/status.md` for detailed progress notes. This is inference experimentation tooling, not a product.
-
-## Status
-
-Phases 1-3 of the objective's plan are done: local skeleton, full real backend, and a first successful real generation on the target hardware (playable MP4, video + audio, within VRAM). Phase 4 (performance) and Phase 5 (verifying more checkpoints) are in progress — see `objective/status.md`. A web UI for queueing generations from a browser has also been added — see `objective/ui.md` — and since then has grown text-to-video support, a frame extractor (pull a frame out of a generated video and save it back as a new input image), and input/output thumbnails.
+Minimal CLI + a lightweight web UI for MiniMax H3 (FL2VA) image-to-video + audio generation, targeting a single RTX 5090. See `objective/objective.md` for the CLI's full spec, `objective/ui.md` for the web UI's, and `objective/status.md` for progress notes, known limitations, and measured performance. This is inference experimentation tooling, not a product.
 
 ## Two modes
 
 - **CPU mode** — no GPU, no model weights, no ComfyUI checkout, no network access. Runs the CLI or the web UI against a mock backend that fakes generation. Use this for developing/testing application code (CLI, validation, the web UI itself).
-- **GPU mode** — real inference via a headless ComfyUI import on an actual RTX 5090. Use this for developing the model-loading/inference pipeline, or for real generation.
+- **GPU mode** — real inference via a headless ComfyUI import on an actual RTX 5090. Use this for real generation.
 
 Both modes share the same CLI, web UI, and code paths outside the backend itself.
 
@@ -51,7 +47,7 @@ Other optional flags (real or mock): `--seed` (default 42), `--steps` (default 2
 make serve-mock   # starts the UI at http://localhost:8000 (override with PORT=...) against the mock backend
 ```
 
-Open the printed URL in a browser. Upload an image (or leave the image dropdown on "None (text-to-video)"), queue a prompt, and the mock backend fakes a full generation end-to-end (progress log, output dropdown, video player) — no GPU, model files, or network access involved. Use this to develop/test the UI itself before touching real hardware.
+Open the printed URL in a browser. Upload an image (or leave the image dropdown on "None (text-to-video)"), queue a prompt, and the mock backend fakes a full generation end-to-end (progress log, output dropdown, video player) — no GPU, model files, or network access involved.
 
 ---
 
@@ -63,7 +59,7 @@ Open the printed URL in a browser. Upload an image (or leave the image dropdown 
 make setup
 ```
 
-Installs `uv` and `ffmpeg` if missing, clones the pinned ComfyUI checkout (`COMFYUI_REF` in the `Makefile` — the real backend imports it headlessly as a library, no server/UI, rather than vendoring MiniMax H3 code), runs `uv sync --group gpu`, then verifies the whole chain (ffmpeg binaries, CUDA visible, ComfyUI importable). Safe to re-run — every step is a no-op if already done.
+Installs `uv` and `ffmpeg` if missing, clones the pinned ComfyUI checkout (`COMFYUI_REF` in the `Makefile` — the real backend imports it headlessly as a library, no server/UI), runs `uv sync --group gpu`, then verifies the whole chain (ffmpeg binaries, CUDA visible, ComfyUI importable). Safe to re-run — every step is a no-op if already done.
 
 ### Fetch weights
 
@@ -90,9 +86,9 @@ A bare `--output` filename (no directory) lands in `outputs/` (auto-created, git
 make serve        # requires a DiT checkpoint already in diffusion_models/ (see "Fetch weights" above)
 ```
 
-Open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead — the server binds `0.0.0.0` and has no RunPod-specific code, so this is purely a deploy-time choice.
+Open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead — the server binds `0.0.0.0` and has no RunPod-specific code.
 
-The DiT checkpoint is auto-discovered from `diffusion_models/` at startup — if more than one `.safetensors` file is present there, set `H3_MODEL_PATH` to pick one explicitly. The real backend keeps the fixed Qwen/VAE models and the discovered DiT loaded in memory across queued jobs instead of reloading them from disk every time — only the first generation after startup pays the full load cost. Up to 5 prompts can be queued; "Clear queue" removes pending jobs only, a job already generating always finishes.
+The DiT checkpoint is auto-discovered from `diffusion_models/` at startup — if more than one `.safetensors` file is present there, set `H3_MODEL_PATH` to pick one explicitly. The real backend keeps the fixed Qwen/VAE models and the discovered DiT loaded in memory across queued jobs instead of reloading them from disk every time. Up to 5 prompts can be queued; "Clear queue" removes pending jobs only, a job already generating always finishes.
 
 UI features beyond the basic upload/prompt/generate flow:
 
@@ -142,30 +138,23 @@ The token is only ever sent to `huggingface.co`, never to a non-HF URL like Civi
 
 ### Fast downloads (hf-xet)
 
-`fetch_models.sh` installs `hf` with the `hf_xet` extra, so Hugging Face transfers use the Rust-based Xet backend (the Hub's default for Xet-enabled repos, which `Comfy-Org/MiniMax-H3` is) instead of falling back to plain HTTP. On a box with at least ~64GB RAM — the RunPod target has ~92GB — the script also auto-sets `HF_XET_HIGH_PERFORMANCE=1`, which saturates network bandwidth and all CPU cores for the transfer; on a smaller box it leaves hf-xet's own auto-tuned default alone. Override either direction with an explicit `HF_XET_HIGH_PERFORMANCE=0` or `=1`. This only affects `fetch_models.sh`'s HF downloads — not the curl fallback for non-HF sources like CivitAI, and not `generate.py` itself.
-
-### Known tested checkpoints
-
-One community int8/ConvRot checkpoint has been verified end-to-end — see `objective/status.md` for the verification trail and the other checkpoints still to be tested. It's a turbo/LoRA-merged variant needing only ~4-6 steps rather than the default 20 (`--steps 5`); that's checkpoint-specific, not a CLI default change.
-
-### Measured performance
-
-First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (turbo checkpoint above) → 162.4s total (1.2s load + 161.2s generation). Full stage breakdown and peak VRAM/RAM aren't captured yet — see `objective/status.md`.
-
-`--duration` presets beyond 10s (12.5/15/17.5/20s) are new and unmeasured — the 10s preset alone already peaks at ~28GB VRAM on a 32GB card, so treat anything longer as untested on the 32GB target until it's been run and measured.
-
-The `512px (fast)` `--resolution` preset is also new and unmeasured on real hardware — it should meaningfully speed up denoising/decode and lower VRAM (roughly half the pixels of the 768px default), but neither the speedup nor the output quality has been verified hands-on yet.
+`fetch_models.sh` installs `hf` with the `hf_xet` extra for faster Hugging Face transfers. On a box with at least ~64GB RAM it also auto-sets `HF_XET_HIGH_PERFORMANCE=1` (saturates network + all CPU cores); override either direction with an explicit `HF_XET_HIGH_PERFORMANCE=0` or `=1`. Only affects `fetch_models.sh`'s HF downloads, not the curl fallback for non-HF sources like CivitAI.
 
 ### Docker (for a RunPod template)
 
+The `Dockerfile` `git clone`s this repo itself during the build rather than copying local files, so it's a single self-contained file — build it from any directory, on any machine, with no local checkout needed:
+
 ```bash
+curl -O https://raw.githubusercontent.com/ashwin2rai/videomodeltests/main/Dockerfile
 docker build -t h3-test .
 docker run --gpus all -p 8000:8000 -e DIT_URL=<url-to-your-DiT-checkpoint> h3-test
 ```
 
-The image contains everything needed to serve the UI and run real generation — the pinned ComfyUI checkout, the `gpu` dependency group, ffmpeg — **except model weights**. `scripts/docker-entrypoint.sh` (the image's `ENTRYPOINT`) fetches the fixed stock models on every container start, and the DiT checkpoint too if `DIT_URL` is set (optionally with `DIT_NAME` to name the file). This is a deliberate choice, not an oversight: there is **no persistent volume**, so weights land on the container's own ephemeral disk and a fresh container genuinely re-downloads them every time — accepted as the price of a simpler deployment (see `objective/status.md`). Set `HF_TOKEN` for authenticated Hugging Face requests; `HF_XET_HIGH_PERFORMANCE` auto-enables on boxes with enough RAM (see the "Fast downloads" section above) — both pass straight through as normal `docker run -e` env vars.
+Build from a fork/branch with `--build-arg REPO_URL=... --build-arg REPO_REF=...`.
 
-`CMD` defaults to `serve` (the real backend); other entrypoint modes: `serve-mock` (no GPU/weights needed, for testing the image itself), `check` (runs `scripts/check_env.py` and exits), `bash` (a shell, for debugging — e.g. `docker run --gpus all -it h3-test bash`). On RunPod, set the Container Disk size well above the image size plus ~90GB (stock models + a DiT checkpoint) since everything shares that one ephemeral disk, expose the container's port (`PORT`, default 8000) as an HTTP service, and set `DIT_URL` as a template env var.
+The image contains everything needed to serve the UI and run real generation — the pinned ComfyUI checkout, the `gpu` dependency group, ffmpeg — except model weights. `scripts/docker-entrypoint.sh` (the image's `ENTRYPOINT`) fetches the fixed stock models on every container start, and the DiT checkpoint too if `DIT_URL` is set (optionally with `DIT_NAME` to name the file); there's no persistent volume, so this re-downloads on every fresh container. Set `HF_TOKEN`/`HF_XET_HIGH_PERFORMANCE` as normal `docker run -e` env vars.
+
+`CMD` defaults to `serve` (the real backend); other entrypoint modes: `serve-mock` (no GPU/weights needed), `check` (runs `scripts/check_env.py` and exits), `bash` (a shell, for debugging — e.g. `docker run --gpus all -it h3-test bash`). On RunPod, set the Container Disk size well above the image size plus ~90GB (stock models + a DiT checkpoint), expose the container's port (`PORT`, default 8000) as an HTTP service, and set `DIT_URL` as a template env var.
 
 ### Troubleshooting: CUDA OOM
 
@@ -179,4 +168,4 @@ The image contains everything needed to serve the UI and run real generation —
 
 ## Checkpoint support
 
-Only the MiniMax H3 FL2VA DiT is swappable, as a filesystem path to a `.safetensors` file (BF16, or supported INT8/INT8-ConvRot). `h3.validate_checkpoint()` inspects the header and rejects GGUF, malformed files, and anything without the real H3 tensor signature. **Known limitation:** FL2VA and Ref2VA checkpoints have identical tensor layouts — Ref2VA rejection is filename-based only, not a real content check.
+Only the MiniMax H3 FL2VA DiT is swappable, as a filesystem path to a `.safetensors` file (BF16, or supported INT8/INT8-ConvRot). `h3.validate_checkpoint()` inspects the header and rejects GGUF, malformed files, and anything without the real H3 tensor signature. FL2VA and Ref2VA checkpoints share identical tensor layouts, so Ref2VA rejection here is filename-based only, not a content check.

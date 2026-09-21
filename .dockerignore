@@ -1,25 +1,6 @@
-.git
-.github
-
-# Docs -- not needed at runtime
-objective/
-README.md
-LICENSE
-
-# Local dev/test-only, not needed at runtime (also excludes pytest fixtures)
-tests/
-scripts/pre-commit
-
-# Local dev artifacts that must never be baked into the image
-.venv/
-__pycache__/
-**/__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
-inputs/
-outputs/
-.env
-
-Dockerfile
-.dockerignore
+# The Dockerfile clones the repo itself via `git clone` (see REPO_URL/REPO_REF build
+# args) rather than COPYing from the local build context -- nothing in this directory
+# is ever read by the build. Ignoring everything keeps `docker build .` fast and
+# side-effect-free no matter which directory (or how large/dirty a local checkout) you
+# run it from.
+*
