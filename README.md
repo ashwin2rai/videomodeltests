@@ -140,6 +140,10 @@ Needed only to avoid rate limits or access gated repos when fetching models:
 
 The token is only ever sent to `huggingface.co`, never to a non-HF URL like CivitAI. (Alternative: `uvx --from huggingface_hub hf auth login` once, stores a token `huggingface_hub` reuses automatically.)
 
+### Fast downloads (hf-xet)
+
+`fetch_models.sh` installs `hf` with the `hf_xet` extra, so Hugging Face transfers use the Rust-based Xet backend (the Hub's default for Xet-enabled repos, which `Comfy-Org/MiniMax-H3` is) instead of falling back to plain HTTP. On a box with at least ~64GB RAM — the RunPod target has ~92GB — the script also auto-sets `HF_XET_HIGH_PERFORMANCE=1`, which saturates network bandwidth and all CPU cores for the transfer; on a smaller box it leaves hf-xet's own auto-tuned default alone. Override either direction with an explicit `HF_XET_HIGH_PERFORMANCE=0` or `=1`. This only affects `fetch_models.sh`'s HF downloads — not the curl fallback for non-HF sources like CivitAI, and not `generate.py` itself.
+
 ### Known tested checkpoints
 
 One community int8/ConvRot checkpoint has been verified end-to-end — see `objective/status.md` for the verification trail and the other checkpoints still to be tested. It's a turbo/LoRA-merged variant needing only ~4-6 steps rather than the default 20 (`--steps 5`); that's checkpoint-specific, not a CLI default change.

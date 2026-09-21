@@ -6,8 +6,11 @@
 #
 # Hugging Face-hosted sources are fetched with the official `hf` CLI (via
 # `uvx`, no project dependency needed) for resumable, integrity-checked
-# transfers. Non-HF sources (e.g. CivitAI) fall back to a plain curl
-# download with a manual size check.
+# transfers, using the Rust-based hf-xet backend (huggingface_hub's default
+# transfer path for Xet-enabled repos, which Comfy-Org/MiniMax-H3 is) with
+# high-performance mode auto-enabled on boxes with enough RAM to back it —
+# see the `hf()`/`HF_XET_HIGH_PERFORMANCE` block below. Non-HF sources (e.g.
+# CivitAI) fall back to a plain curl download with a manual size check.
 set -euo pipefail
 
 STOCK_REPO="Comfy-Org/MiniMax-H3"
@@ -27,6 +30,21 @@ if [ -f "$REPO_ROOT/.env" ]; then
   [ -n "$existing_hf_token" ] && HF_TOKEN="$existing_hf_token"
 fi
 
+# hf-xet's "high performance" mode saturates network bandwidth and all CPU
+# cores for parallel transfer — a real win for the tens-of-GB files this
+# script moves, but the docs call for ~64GB+ RAM to safely buffer at that
+# rate, so only auto-enable it on a box that has that much (the RunPod
+# target has ~92GB; a small dev machine wouldn't, but this script also isn't
+# meant to run there — see objective/objective.md). An explicit shell-level
+# or .env value always wins over this auto-detection.
+if [ -z "${HF_XET_HIGH_PERFORMANCE:-}" ]; then
+  mem_kb=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+  if [ "${mem_kb:-0}" -ge $((64 * 1024 * 1024)) ]; then
+    HF_XET_HIGH_PERFORMANCE=1
+  fi
+fi
+export HF_XET_HIGH_PERFORMANCE
+
 py() {
   ( cd "$REPO_ROOT" && uv run python3 -c "$1" )
 }
@@ -35,7 +53,10 @@ hf() {
   # HF_TOKEN, if set, is picked up automatically by huggingface_hub from the
   # environment — deliberately not passed as `--token <value>` here, since
   # the CLI itself warns that leaks into shell history and process listings.
-  uvx --from huggingface_hub hf "$@"
+  # `[hf_xet]` pulls in the Rust-based Xet transfer backend huggingface_hub
+  # uses by default for Xet-enabled repos — without it, `hf` falls back to
+  # plain HTTP and prints a "package not installed" warning on every call.
+  uvx --from 'huggingface_hub[hf_xet]' hf "$@"
 }
 
 # Sets AUTH_HEADER to an Authorization header, but only when the target is
@@ -67,6 +88,11 @@ resolve_models_root() {
   MODELS_ROOT="${MODELS_ROOT:-$(py 'import h3; print(h3.MODELS_ROOT)')}"
   echo "INFO: using MODELS_ROOT=$MODELS_ROOT"
   [ -n "${HF_TOKEN:-}" ] || echo "WARNING: no HF_TOKEN set — requests to huggingface.co will be unauthenticated (lower rate limits)."
+  if [ "${HF_XET_HIGH_PERFORMANCE:-0}" = "1" ]; then
+    echo "INFO: HF_XET_HIGH_PERFORMANCE=1 — hf-xet will use all CPU cores and try to saturate network bandwidth."
+  else
+    echo "INFO: HF_XET_HIGH_PERFORMANCE not set (this box has <64GB RAM, or you set it to a non-1 value) — using hf-xet's normal auto-tuned transfer speed."
+  fi
 }
 
 usage() {
@@ -84,6 +110,11 @@ Environment:
                 (higher rate limits, access to gated repos). Only ever sent to
                 huggingface.co — never forwarded to a non-HF URL. Can also be
                 set via a .env file in the repo root (auto-loaded if present).
+  HF_XET_HIGH_PERFORMANCE
+                Optional. 1 saturates network+CPU for faster hf-xet transfers
+                (needs ~64GB+ RAM); auto-set to 1 when this box has that much
+                RAM, otherwise left to hf-xet's own auto-tuned default. Set to
+                0 to force it off regardless of detected RAM.
 EOF
 }
 

@@ -100,6 +100,12 @@ Researched cheap, drop-in speedups for the real backend ahead of Phase 4 (no res
 
 Verified hands-on on this Codespaces instance: `make -n comfyui` and `python3 -c "import h3; print(h3.COMFYUI_ROOT)"` both resolve to `/workspaces/ComfyUI` (this repo is at `/workspaces/videomodeltests`), and `make comfyui` successfully cloned there. The `COMFYUI_ROOT`/`MODELS_ROOT` env var override (documented in the README's "Configuration" section) is unaffected — this only changes the fallback when neither is set. `MODELS_ROOT` placeholder note above (`/workspace/ComfyUI/models`, confirmed correct on the RunPod instance) still stands as a historical record of that specific instance; it's no longer the literal default in code.
 
+## Fast downloads: hf-xet high-performance mode (2026-09-21)
+
+Researched the modern equivalent of the old `HF_HUB_ENABLE_HF_TRANSFER=1` flag: `hf_transfer` is deprecated/removed now that the Hub is fully on Xet storage, and current `huggingface_hub`/`hf` already uses the Rust-based `hf-xet` backend by default *if the `hf_xet` extra is installed* — otherwise it silently falls back to plain HTTP with a one-line warning. `fetch_models.sh`'s `hf()` wrapper previously ran `uvx --from huggingface_hub hf`, i.e. without the extra, so every download was hitting that slow-path fallback.
+
+Fixed: `hf()` now runs `uvx --from 'huggingface_hub[hf_xet]' hf`. Also wired up `HF_XET_HIGH_PERFORMANCE` (a real upstream env var that saturates network+CPU for large transfers, but the docs call for ~64GB+ RAM to safely buffer at that rate) — auto-enabled only when `/proc/meminfo` reports that much RAM (true on the ~92GB RunPod target, false on this ~8GB dev box — verified both the detection logic and the `usage()`/`resolve_models_root()` messaging by hand on this dev box), always overridable by an explicit env var or `.env` entry (same precedence convention as `HF_TOKEN`). Documented in the README's new "Fast downloads (hf-xet)" section. Not yet verified against a real multi-GB download on RunPod (this dev machine can't run one) — worth confirming the speedup is real on the next RunPod session.
+
 ## What's left (per `objective/objective.md`'s phased plan)
 
 - **Phases 1-3 are done.** One real checkpoint + one real image + one prompt → one valid, playable MP4 with audio, on the RTX 5090, within VRAM. See above for the exact command/output/timing.
