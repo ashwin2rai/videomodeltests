@@ -30,9 +30,12 @@ DEFAULT_STEPS = 20
 # Duration presets, not free-form frame count/FPS (see objective.md's "Do not
 # expose: ... frame count, FPS"). Each value is the nearest frame count on H3's
 # 17k+5 grid to the target duration at FPS=24: 5s->124 (5.167s), 7.5s->175
-# (7.292s), 10s->243 (10.125s). 10s peaks at ~28GB VRAM on a 32GB RTX 5090,
-# measured hands-on (see objective/status.md) — leave headroom before adding presets.
-DURATION_PRESETS = {5.0: 124, 7.5: 175, 10.0: 243}
+# (7.292s), 10s->243 (10.125s), 12.5s->294 (12.25s), 15s->362 (15.083s),
+# 17.5s->413 (17.208s), 20s->481 (20.042s). 10s peaks at ~28GB VRAM on a 32GB
+# RTX 5090, measured hands-on (see objective/status.md); presets beyond 10s
+# scale VRAM usage further and haven't been measured against that 32GB target —
+# confirm headroom before running them on a 32GB card.
+DURATION_PRESETS = {5.0: 124, 7.5: 175, 10.0: 243, 12.5: 294, 15.0: 362, 17.5: 413, 20.0: 481}
 DEFAULT_DURATION = 5.0
 
 # Sampling defaults, not exposed on the CLI (see objective.md). MiniMaxH3ImageToVideo

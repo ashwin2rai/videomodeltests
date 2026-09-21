@@ -25,9 +25,13 @@ def parse_args(argv=None):
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=h3.DEFAULT_SEED)
     parser.add_argument("--steps", type=int, default=h3.DEFAULT_STEPS)
+    duration_choices = sorted(h3.DURATION_PRESETS)
+    duration_metavar = "{" + ",".join(
+        str(int(d)) if d == int(d) else str(d) for d in duration_choices
+    ) + "}"
     parser.add_argument(
         "--duration", type=float, default=h3.DEFAULT_DURATION,
-        choices=sorted(h3.DURATION_PRESETS), metavar="{5,7.5,10}",
+        choices=duration_choices, metavar=duration_metavar,
         help="Approximate video duration in seconds",
     )
     parser.add_argument("--mock", action="store_true", help="Use the mock backend (development only)")
