@@ -4,7 +4,7 @@ Minimal CLI + a lightweight web UI for MiniMax H3 (FL2VA) image-to-video + audio
 
 ## Status
 
-Phases 1-3 of the objective's plan are done: local skeleton, full real backend, and a first successful real generation on the target hardware (playable MP4, video + audio, within VRAM). Phase 4 (performance) and Phase 5 (verifying more checkpoints) are in progress — see `objective/status.md`. A web UI for queueing generations from a browser has also been added — see `objective/ui.md`.
+Phases 1-3 of the objective's plan are done: local skeleton, full real backend, and a first successful real generation on the target hardware (playable MP4, video + audio, within VRAM). Phase 4 (performance) and Phase 5 (verifying more checkpoints) are in progress — see `objective/status.md`. A web UI for queueing generations from a browser has also been added — see `objective/ui.md` — and since then has grown text-to-video support, a frame extractor (pull a frame out of a generated video and save it back as a new input image), and input/output thumbnails.
 
 ## Two modes
 
@@ -43,13 +43,15 @@ uv run pytest -q
 
 `--mock` needs no CUDA, no model files, and no network access.
 
+Other optional flags (real or mock): `--seed` (default 42), `--steps` (default 20), `--duration` — one of `5, 7.5, 10, 12.5, 15, 17.5, 20` seconds (default 5; each maps internally to a fixed frame count, see `h3.DURATION_PRESETS`). Omit `--image` entirely for text-to-video.
+
 ### Web UI
 
 ```bash
 make serve-mock   # starts the UI at http://localhost:8000 (override with PORT=...) against the mock backend
 ```
 
-Open the printed URL in a browser. Upload an image, queue a prompt, and the mock backend fakes a full generation end-to-end (progress log, output dropdown, video player) — no GPU, model files, or network access involved. Use this to develop/test the UI itself before touching real hardware.
+Open the printed URL in a browser. Upload an image (or leave the image dropdown on "None (text-to-video)"), queue a prompt, and the mock backend fakes a full generation end-to-end (progress log, output dropdown, video player) — no GPU, model files, or network access involved. Use this to develop/test the UI itself before touching real hardware.
 
 ---
 
@@ -91,6 +93,12 @@ make serve        # requires a DiT checkpoint already in diffusion_models/ (see 
 Open `http://localhost:8000` (override with `PORT=...`). On RunPod, expose that port as an HTTP service in the pod config and use the proxy URL it gives you instead — the server binds `0.0.0.0` and has no RunPod-specific code, so this is purely a deploy-time choice.
 
 The DiT checkpoint is auto-discovered from `diffusion_models/` at startup — if more than one `.safetensors` file is present there, set `H3_MODEL_PATH` to pick one explicitly. The real backend keeps the fixed Qwen/VAE models and the discovered DiT loaded in memory across queued jobs instead of reloading them from disk every time — only the first generation after startup pays the full load cost. Up to 5 prompts can be queued; "Clear queue" removes pending jobs only, a job already generating always finishes.
+
+UI features beyond the basic upload/prompt/generate flow:
+
+- **Text-to-video** — pick "None (text-to-video)" in the image dropdown instead of an uploaded image.
+- **Frame extractor** — pick any video already in `outputs/`, scrub to a frame, and save it straight back into `inputs/` as a new starting image (handy for chaining generations). The preview pillarboxes non-16:9 videos to show their real aspect ratio rather than stretching them.
+- **Thumbnails** — the input-image and output-video dropdowns show a preview thumbnail next to the current selection.
 
 ### Step by step (without `make setup`)
 
@@ -138,6 +146,8 @@ One community int8/ConvRot checkpoint has been verified end-to-end — see `obje
 ### Measured performance
 
 First successful real generation (RTX 5090): 1376×768, 124 frames, 5 steps (turbo checkpoint above) → 162.4s total (1.2s load + 161.2s generation). Full stage breakdown and peak VRAM/RAM aren't captured yet — see `objective/status.md`.
+
+`--duration` presets beyond 10s (12.5/15/17.5/20s) are new and unmeasured — the 10s preset alone already peaks at ~28GB VRAM on a 32GB card, so treat anything longer as untested on the 32GB target until it's been run and measured.
 
 ### Troubleshooting: CUDA OOM
 
