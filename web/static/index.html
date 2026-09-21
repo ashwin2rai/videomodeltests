@@ -164,7 +164,7 @@
     background: #000; display: flex; align-items: center; justify-content: center;
     min-height: 120px;
   }
-  .frame-box canvas { width: 100%; display: none; max-height: 320px; }
+  .frame-box canvas { width: 100%; height: auto; display: none; max-height: 320px; object-fit: contain; }
   .frame-box canvas.visible { display: block; }
   .frame-box .empty-hint { color: var(--muted); font-size: 0.82rem; padding: 30px 0; }
   .frame-box .empty-hint.hidden { display: none; }
@@ -449,6 +449,11 @@ frameVideoEl.addEventListener('loadedmetadata', () => {
   frameTotal = Math.max(0, Math.round(frameVideoEl.duration * FRAME_FPS) - 1);
   frameCanvas.width = frameVideoEl.videoWidth;
   frameCanvas.height = frameVideoEl.videoHeight;
+  // Canvas doesn't reliably derive a CSS intrinsic ratio from its width/height
+  // attributes the way <img>/<video> do, so under the box's `max-height` clamp
+  // it would stretch instead of pillarboxing like the video player does --
+  // set it explicitly so the preview matches the real (unstretched) frame data.
+  frameCanvas.style.aspectRatio = `${frameVideoEl.videoWidth} / ${frameVideoEl.videoHeight}`;
   frameSlider.max = frameTotal;
   frameNumber.max = frameTotal;
   setFrameControlsEnabled(true);
