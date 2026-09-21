@@ -104,8 +104,7 @@
   .subtext { margin-top: 10px; font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .subtext .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--busy); flex: none; }
 
-  .knobs { display: flex; flex-wrap: wrap; gap: 10px; }
-  .knobs > div { flex: 1; min-width: 110px; }
+  .knobs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
   .knobs label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
   .seed-row { display: flex; gap: 6px; }
 
@@ -260,11 +259,10 @@
 
   <section>
     <div class="section-head"><label>Video</label></div>
-    <div class="select-wrap" style="margin-bottom: 8px;">
+    <div class="select-wrap" style="margin-bottom: 14px;">
       <select id="video-select"></select>
       <span class="chevron">&#9662;</span>
     </div>
-    <p class="hint" style="margin: 0 0 10px;">Select any generated video to load it here.</p>
     <div class="video-box"><video id="video-player" controls></video></div>
     <div class="video-meta"><span id="video-name">&mdash;</span><span id="video-duration"></span></div>
   </section>
