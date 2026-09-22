@@ -10,6 +10,12 @@
 # context), so this single file is all you need to build the image — from any
 # directory, on any machine, with no local checkout required. Pass --build-arg
 # REPO_URL=... / REPO_REF=... to build from a fork or branch instead of the default.
+# /app's .git is kept (not stripped) so the entrypoint can `git reset --hard` to the
+# latest commit of that same branch on every container start — see
+# docker-entrypoint.sh — so a plain app-code change doesn't need a rebuild. That does
+# NOT cover pyproject.toml/uv.lock changes (the venv stays as baked at build time); the
+# entrypoint warns loudly if it pulls a change to either. Set SKIP_GIT_PULL=1 to pin a
+# container to exactly what was baked in.
 #
 # No nvidia/cuda base image: the `gpu` dependency group's torch wheel already bundles
 # its own CUDA runtime, and RunPod's container runtime injects the host driver
@@ -45,7 +51,7 @@ RUN apt-get update -qq \
 ARG REPO_URL=https://github.com/ashwin2rai/videomodeltests.git
 ARG REPO_REF=main
 RUN git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" /app \
-    && rm -rf /app/.git /app/tests /app/objective
+    && rm -rf /app/tests /app/objective
 
 # ComfyUI, imported headlessly as a library by the real backend — kept at the exact
 # tag it's been validated against (see objective/status.md), bumped deliberately, not
@@ -90,10 +96,11 @@ FROM python:3.12-slim-bookworm AS runtime
 #     python:slim base doesn't hit until the first real CPU-side tensor op needs it.
 #   - ninja-build: several PyTorch/Triton JIT and CUDA-extension build paths prefer
 #     ninja over make for parallel compilation; falls back gracefully if unused.
-#   - git: not needed by anything this repo currently does at *runtime* (only the
-#     builder stage clones anything) — kept for the `bash`/`check` debug entrypoint
-#     modes and because objective/status.md's paused SageAttention3 investigation
-#     would need to `git clone` a source build from inside a running container.
+#   - git: the entrypoint's own `git reset --hard` update-on-start step needs it now
+#     (see docker-entrypoint.sh and the top-of-file comment); also handy for the
+#     `bash`/`check` debug modes and a future SageAttention3 source-build experiment
+#     (objective/status.md, paused) that would `git clone` from inside a running
+#     container.
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         ffmpeg curl ca-certificates bash git \

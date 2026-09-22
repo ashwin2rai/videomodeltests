@@ -156,6 +156,8 @@ Build from a fork/branch with `--build-arg REPO_URL=... --build-arg REPO_REF=...
 
 The image contains everything needed to serve the UI and run real generation — the pinned ComfyUI checkout, the `gpu` dependency group, ffmpeg — except model weights. `scripts/docker-entrypoint.sh` (the image's `ENTRYPOINT`) fetches the fixed stock models on every container start, and the DiT checkpoint too if `DIT_URL` is set (optionally with `DIT_NAME` to name the file); there's no persistent volume, so this re-downloads on every fresh container. Set `HF_TOKEN`/`HF_XET_HIGH_PERFORMANCE` as normal `docker run -e` env vars.
 
+The entrypoint also updates `/app` to the latest commit of the branch it was built from (`git fetch` + `reset --hard`) before starting, so a plain container restart picks up app-code changes (`h3.py`, `generate.py`, `web/`, `scripts/`) without rebuilding the image. This does **not** cover `pyproject.toml`/`uv.lock` changes — the venv stays exactly as baked at build time, and the entrypoint prints a `WARNING` if it pulls a change to either, meaning a rebuild is actually needed. Set `SKIP_GIT_PULL=1` to pin a container to exactly what was baked into the image.
+
 `CMD` defaults to `serve` (the real backend); other entrypoint modes: `serve-mock` (no GPU/weights needed), `check` (runs `scripts/check_env.py` and exits), `bash` (a shell, for debugging — e.g. `docker run --gpus all -it h3-test bash`). On RunPod, set the Container Disk size well above the image size plus ~90GB (stock models + a DiT checkpoint), expose the container's port (`PORT`, default 8000) as an HTTP service, and set `DIT_URL` as a template env var.
 
 ### Troubleshooting: CUDA OOM

@@ -11,6 +11,32 @@ set -euo pipefail
 
 cd /app
 
+# Pulls the latest commit of the branch/tag this image was built against, so a plain
+# `docker run`/pod restart picks up app-code changes without a rebuild. `reset --hard` +
+# `clean -fd` (not `-x`) rather than a plain `git pull`, since the image intentionally
+# strips tests/objective at build time (see Dockerfile) -- a merge-based pull would
+# choke on those as uncommitted local deletions; a hard reset just restores them from
+# git, which is harmless. `-fd` without `-x` still respects .gitignore, so inputs/
+# outputs/ (this container's actual data) are never touched. Does NOT re-run `uv sync`:
+# a pull that only changes pyproject.toml/uv.lock updates the source but not the
+# already-baked venv, so that case is detected and warned about explicitly below instead
+# of silently running with a stale environment.
+if [ "${SKIP_GIT_PULL:-0}" = "1" ]; then
+  echo "=== SKIP_GIT_PULL=1 -- using the image's baked-in checkout ($(git rev-parse --short HEAD)) ==="
+else
+  echo "=== Updating videomodeltests from $(git remote get-url origin) ($(git rev-parse --abbrev-ref HEAD)) ==="
+  before_deps=$(git hash-object pyproject.toml uv.lock 2>/dev/null || true)
+  if git fetch --depth 1 origin && git reset --hard '@{upstream}' && git clean -fd; then
+    echo "Now at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+    if [ "$before_deps" != "$(git hash-object pyproject.toml uv.lock 2>/dev/null || true)" ]; then
+      echo "WARNING: pyproject.toml/uv.lock changed -- the image's baked-in venv was NOT updated." >&2
+      echo "WARNING: rebuild the image for new/changed dependencies to actually take effect." >&2
+    fi
+  else
+    echo "WARNING: git pull failed -- continuing with the image's baked-in checkout ($(git rev-parse --short HEAD))." >&2
+  fi
+fi
+
 echo "=== Fetching fixed stock models (Qwen encoder + video/audio VAEs) ==="
 ./scripts/fetch_models.sh stock
 
