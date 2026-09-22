@@ -13,14 +13,22 @@ HF_REPO_URL="https://huggingface.co/${STOCK_REPO}/resolve/main"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Auto-load .env (e.g. HF_TOKEN=...), without overriding an already-exported value.
+# Auto-load .env (e.g. HF_TOKEN=...), without overriding any value already exported into
+# this process's environment (e.g. by RunPod's pod env vars) -- a .env entry should only
+# fill in what isn't already set, never clobber it.
 if [ -f "$REPO_ROOT/.env" ]; then
   existing_hf_token="${HF_TOKEN:-}"
+  existing_xet_perf="${HF_XET_HIGH_PERFORMANCE:-}"
+  existing_progress_interval="${PROGRESS_INTERVAL_SECONDS:-}"
+  existing_models_root="${MODELS_ROOT:-}"
   set -a
   # shellcheck disable=SC1091
   source "$REPO_ROOT/.env"
   set +a
   [ -n "$existing_hf_token" ] && HF_TOKEN="$existing_hf_token"
+  [ -n "$existing_xet_perf" ] && HF_XET_HIGH_PERFORMANCE="$existing_xet_perf"
+  [ -n "$existing_progress_interval" ] && PROGRESS_INTERVAL_SECONDS="$existing_progress_interval"
+  [ -n "$existing_models_root" ] && MODELS_ROOT="$existing_models_root"
 fi
 
 # hf-xet's "high performance" mode saturates network+CPU for much faster transfer of
@@ -226,10 +234,14 @@ fetch_dit() {
     echo "Downloading $filename via hf ($repo_id, revision $revision)..."
     run_with_progress "$scratch_dir" "${expected_bytes:-0}" \
       hf download "$repo_id" "$path" --revision "$revision" --local-dir "$scratch_dir"
-    # scratch_dir is fresh and holds exactly this one download, so find it rather than
-    # parse it out of hf's own stdout (which may now carry progress output too).
-    downloaded_path=$(find "$scratch_dir" -type f | head -1)
-    [ -n "$downloaded_path" ] || { echo "Error: hf download reported success but no file was found in $scratch_dir" >&2; exit 1; }
+    # `--local-dir` also writes a tiny sidecar at .cache/huggingface/download/<path>.metadata
+    # (etag/commit hash bookkeeping -- see huggingface_hub's _local_folder.py) alongside the
+    # real payload, so `find "$scratch_dir" -type f | head -1` could pick either one depending
+    # on directory-entry order -- it was consistently grabbing the metadata sidecar, which
+    # then failed h3.validate_checkpoint() as "Not a valid safetensors file". The real payload
+    # is always at "$scratch_dir/$path" since we asked `hf download` for exactly that path.
+    downloaded_path="$scratch_dir/$path"
+    [ -f "$downloaded_path" ] || { echo "Error: hf download reported success but $downloaded_path is missing" >&2; exit 1; }
     mv "$downloaded_path" "$dest"
     rm -rf "$scratch_dir"
   else
