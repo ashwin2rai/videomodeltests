@@ -213,7 +213,22 @@ if m:
 # matches what the download will actually write. Non-HF hosts don't send it — hence the
 # Content-Length fallback.
 remote_size_bytes() {
-  curl_auth -sIL "$1" | tr -d '\r' | awk '
+  local headers status
+  headers=$(curl_auth -sIL "$1" | tr -d '\r') || return 0
+  # Only trust a size from a successful final response. A 401/404 (bad token, gated or
+  # mistyped repo) still carries a Content-Length -- for the error page -- and taking that
+  # as the file size makes the disk check pass trivially, the progress bar nonsense, and,
+  # worst of all, makes a completed-but-wrong download look like a truncated one that's
+  # worth retrying forever. Empty output means "unknown", which every caller handles.
+  status=$(printf '%s\n' "$headers" | awk 'toupper($1) ~ /^HTTP\// { code = $2 } END { print code }')
+  case "$status" in
+    2*) ;;
+    *)
+      echo "WARNING: HEAD returned HTTP ${status:-no-response} for $1 — expected size unknown." >&2
+      return 0
+      ;;
+  esac
+  printf '%s\n' "$headers" | awk '
     tolower($1) == "x-linked-size:" { linked = $2 }
     tolower($1) == "content-length:" { len = $2 }
     END { print (linked != "" ? linked : len) }'
