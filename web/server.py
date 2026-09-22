@@ -3,6 +3,7 @@ import os
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -74,7 +75,12 @@ def _worker_loop():
     while True:
         job = job_queue.get()
         job_id += 1
-        logger.info("Starting job %d: %r (queue_length=%d)", job_id, job["prompt"], job_queue.qsize())
+        logger.info(
+            "Starting job %d: %r (image=%s duration=%s steps=%s seed=%s resolution=%s queue_length=%d)",
+            job_id, job["prompt"], job["image"] or "(none — text-to-video)",
+            job["duration"], job["steps"], job["seed"], job["resolution"], job_queue.qsize(),
+        )
+        job_started = time.monotonic()
         with state_lock:
             current_job = {
                 "id": job_id, "prompt": job["prompt"], "progress": 0.0,
@@ -100,12 +106,15 @@ def _worker_loop():
                 progress_callback=progress_callback,
             )
         except Exception as e:
-            logger.exception("Generation failed")
+            logger.exception("Job %d failed after %.1fs", job_id, time.monotonic() - job_started)
             with state_lock:
                 current_job["status"] = "error"
                 current_job["message"] = str(e)
         else:
-            logger.info("Job finished: %r -> %s", job["prompt"], output_path)
+            logger.info(
+                "Job %d finished in %.1fs: %r -> %s",
+                job_id, time.monotonic() - job_started, job["prompt"], output_path,
+            )
             with state_lock:
                 current_job["status"] = "done"
         finally:

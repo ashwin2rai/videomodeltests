@@ -39,8 +39,11 @@ report("C compiler (cc/gcc/clang, or $CC)", _cc_found is not None, _cc_found or 
 
 try:
     import torch
-except ImportError:
-    report("gpu dependency group (uv sync --group gpu)", False)
+except ImportError as e:
+    # Show the real message, not just "missing" -- an ImportError here can mean either
+    # "gpu group never installed" or "installed but a system shared library it dlopens
+    # is missing" (e.g. libgomp on a minimal base image), and those need different fixes.
+    report("gpu dependency group (uv sync --group gpu)", False, str(e))
 else:
     report("gpu dependency group (uv sync --group gpu)", True, f"torch {torch.__version__}")
     cuda_ok = torch.cuda.is_available()

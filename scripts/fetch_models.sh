@@ -181,13 +181,14 @@ for p in (h3.QWEN_ENCODER_PATH, h3.VIDEO_VAE_PATH, h3.AUDIO_VAE_PATH):
   echo "Downloading 3 fixed files (~$((total_bytes / 1024**3))GB total) into $MODELS_ROOT..."
   echo "(hf CLI shows little/no live progress when not attached to an interactive terminal —"
   echo " this is normal, not a hang. Check with: du -sh $MODELS_ROOT in another shell.)"
+  local t0=$SECONDS
   # shellcheck disable=SC2086
   hf download "$STOCK_REPO" $rel_paths --local-dir "$MODELS_ROOT" --format human
-  echo "Done."
+  echo "Done. (took $((SECONDS - t0))s)"
 }
 
 fetch_dit() {
-  local url="$1" filename="${2:-}" hf_match dest
+  local url="$1" filename="${2:-}" hf_match dest t0=$SECONDS
 
   hf_match=$(parse_hf_url "$url")
 
@@ -210,12 +211,21 @@ fetch_dit() {
     dest="$MODELS_ROOT/diffusion_models/$filename"
     curl_download "$url" "$dest"
   fi
+  echo "Downloaded $filename in $((SECONDS - t0))s."
 
   echo "Validating $filename against h3.validate_checkpoint()..."
+  # Prints a one-line summary, not the raw dict -- for a real DiT checkpoint,
+  # `metadata` can be a multi-KB-per-tensor quantization blob (hundreds of layers),
+  # which previously made this the single least-readable line in the whole log
+  # (see objective/status.md's Docker debugging notes). h3.py's own logger already
+  # logs the same tensor_count/dtypes concisely; this mirrors that instead of
+  # dumping the full return value.
   py "
 import h3
 info = h3.validate_checkpoint('$dest')
-print('OK:', info)
+meta = info['metadata']
+meta_summary = 'present (%d top-level keys)' % len(meta) if meta else 'none'
+print('OK: tensor_count=%s dtypes=%s metadata=%s' % (info['tensor_count'], info['dtypes'], meta_summary))
 "
 }
 

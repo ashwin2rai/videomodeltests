@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -327,6 +328,18 @@ def mux_mp4(frames, width, height, fps, pcm_audio, sample_rate, output_path, ffm
         wav_path.unlink(missing_ok=True)
 
 
+def _log_cuda_mem(torch, stage):
+    # Visibility into the GPU memory lifecycle described in objective.md (Qwen/VAE ->
+    # offload -> DiT -> offload -> decode VAEs) -- allocated is what's actually live,
+    # reserved is what PyTorch's caching allocator holds onto (the gap between the two
+    # is what allocator fragmentation, see objective/status.md, looks like from the
+    # logs alone, without needing to reproduce the OOM to see it).
+    logger.info(
+        "VRAM after %s: %.2fGB allocated, %.2fGB reserved",
+        stage, torch.cuda.memory_allocated() / 1e9, torch.cuda.memory_reserved() / 1e9,
+    )
+
+
 def _reporter(progress_callback):
     def report(progress, message):
         if progress_callback:
@@ -410,13 +423,24 @@ class H3Backend:
     def load(self):
         try:
             import torch
-        except ImportError:
-            torch = None
+        except ImportError as e:
+            # Surfaced as-is (not swallowed) since this exception's text is the only way
+            # to tell "gpu dependency group never installed" apart from "installed but a
+            # system shared library it dlopens is missing" (e.g. libgomp on a minimal
+            # base image) -- both raise ImportError here, but need different fixes.
+            logger.warning("Could not import torch: %s", e)
+            raise RuntimeError("CUDA is not available. The real H3 backend requires an NVIDIA GPU.") from e
 
-        if torch is None or not torch.cuda.is_available():
+        if not torch.cuda.is_available():
             logger.warning("CUDA is not available on this machine")
             raise RuntimeError("CUDA is not available. The real H3 backend requires an NVIDIA GPU.")
-        logger.info("CUDA available: %s", torch.cuda.get_device_name(0))
+
+        props = torch.cuda.get_device_properties(0)
+        logger.info(
+            "CUDA available: %s (%.1fGB VRAM, compute capability %d.%d) — torch %s, CUDA %s",
+            torch.cuda.get_device_name(0), props.total_memory / 1e9, props.major, props.minor,
+            torch.__version__, torch.version.cuda,
+        )
 
     def generate(
         self,
@@ -454,6 +478,7 @@ class H3Backend:
             model_path, width, height, frames, steps, seed, SAMPLER_NAME, SCHEDULER, CFG,
         )
 
+        t_start = time.perf_counter()
         report(0.0, "loading models")
         sd, sample, utils, model_management, nodes, MiniMaxH3ImageToVideo, vae_decode_audio = _import_comfy()
         import numpy as np
@@ -489,6 +514,9 @@ class H3Backend:
                 logger.info("Reusing cached DiT checkpoint: %s", model_path)
 
             clip, video_vae, audio_vae, model = self._qwen, self._video_vae, self._audio_vae, self._dit_model
+            t_models_loaded = time.perf_counter()
+            logger.info("Models loaded in %.1fs", t_models_loaded - t_start)
+            _log_cuda_mem(torch, "loading models")
 
             report(0.1, "encoding prompt and image" if image is not None else "encoding prompt")
             image_tensor = None
@@ -505,6 +533,8 @@ class H3Backend:
             )
             # No real negative conditioning: cfg=1.0 means comfy never evaluates it.
             negative = [[torch.zeros_like(positive[0][0]), {}]]
+            t_encoded = time.perf_counter()
+            logger.info("Encoded prompt/image in %.1fs", t_encoded - t_models_loaded)
 
             # Qwen + video VAE (used above for conditioning) stay VRAM-resident otherwise,
             # leaving the ~20GB DiT no room to fully load — see objective.md's GPU memory
@@ -512,9 +542,12 @@ class H3Backend:
             # enough that this isn't optional: without it, denoising OOMs on the first step.
             logger.info("Offloading Qwen and video VAE to free VRAM for the DiT")
             model_management.unload_all_models()
+            _log_cuda_mem(torch, "offloading Qwen/video VAE")
 
             def sampler_callback(step, x0, x, total_steps):
                 report(0.1 + 0.7 * ((step + 1) / total_steps), f"generating: {step + 1}/{total_steps}")
+                if step == 0 or (step + 1) % 5 == 0 or step + 1 == total_steps:
+                    logger.info("Denoising step %d/%d", step + 1, total_steps)
 
             report(0.1, "generating video")
             latent_samples = latent["samples"]
@@ -524,10 +557,14 @@ class H3Backend:
                 positive, negative, latent_samples,
                 callback=sampler_callback, seed=seed,
             )
+            t_denoised = time.perf_counter()
+            logger.info("Denoised %d steps in %.1fs", steps, t_denoised - t_encoded)
+            _log_cuda_mem(torch, "denoising")
 
             report(0.9, "decoding")
             logger.info("Offloading the DiT to free VRAM for VAE decode")
             model_management.unload_all_models()  # DiT no longer needed; give the VAEs full room
+            _log_cuda_mem(torch, "offloading DiT")
             video_latent = denoised.unbind()[0]
             video_images = nodes.VAEDecode().decode(video_vae, {"samples": video_latent})[0]
             if video_images.ndim == 5:  # combine [B, T, H, W, C] batches, as VAEDecode itself does
@@ -542,9 +579,18 @@ class H3Backend:
             pcm = waveform.clamp(-1, 1).mul(32767).round().to(torch.int16).cpu().numpy()
             channels = pcm.shape[0]
             pcm_bytes = pcm.T.copy().tobytes()  # interleave channels for the WAV container
+            t_decoded = time.perf_counter()
+            logger.info("Decoded video+audio in %.1fs", t_decoded - t_denoised)
+            _log_cuda_mem(torch, "decoding")
 
         logger.info("Peak VRAM: %.1fGB", torch.cuda.max_memory_allocated() / 1e9)
         report(0.95, "writing output")
         mux_mp4(pixel_frames, width, height, FPS, pcm_bytes, audio["sample_rate"], output_path, channels=channels)
+        t_muxed = time.perf_counter()
+        logger.info(
+            "Stage timing — load: %.1fs, encode: %.1fs, denoise: %.1fs, decode: %.1fs, mux: %.1fs, total: %.1fs",
+            t_models_loaded - t_start, t_encoded - t_models_loaded, t_denoised - t_encoded,
+            t_decoded - t_denoised, t_muxed - t_decoded, t_muxed - t_start,
+        )
 
         report(1.0, "done")

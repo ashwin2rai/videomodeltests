@@ -108,7 +108,14 @@ COPY --from=builder /app /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_NO_SYNC=1 \
     COMFYUI_ROOT=/ComfyUI \
-    PATH="/opt/venv/bin:${PATH}"
+    PATH="/opt/venv/bin:${PATH}" \
+    # Force stdout/stderr unbuffered. Python block-buffers stdout by default when it
+    # isn't a TTY (true for `docker logs`), which can otherwise delay when a print()
+    # (as opposed to `logging`, which already flushes per record) actually reaches the
+    # log -- important here since the whole point of the recent h3.py/server.py logging
+    # additions is real-time visibility into a long-running generation from the logs
+    # alone, without being able to attach a debugger on a remote RunPod pod.
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
