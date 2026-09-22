@@ -146,9 +146,11 @@ The `Dockerfile` `git clone`s this repo itself during the build rather than copy
 
 ```bash
 curl -O https://raw.githubusercontent.com/ashwin2rai/videomodeltests/main/Dockerfile
-docker build -t h3-test .
+docker build --platform linux/amd64 -t h3-test .
 docker run --gpus all -p 8000:8000 -e DIT_URL=<url-to-your-DiT-checkpoint> h3-test
 ```
+
+RunPod GPU pods are always `linux/amd64` — always pass `--platform linux/amd64` explicitly when building, especially from an Apple Silicon Mac or other ARM machine (which otherwise defaults to `arm64` and fails at container start with `exec format error`, since none of the image's binaries match the host's CPU architecture).
 
 Build from a fork/branch with `--build-arg REPO_URL=... --build-arg REPO_REF=...`.
 
