@@ -128,9 +128,17 @@ WORKDIR /app
 
 RUN chmod +x scripts/fetch_models.sh scripts/docker-entrypoint.sh \
     && mkdir -p inputs outputs \
-    # Pre-warm uvx's tool cache for the `hf` CLI so fetch_models.sh's first real call
-    # at container start pays only for the model download, not also for installing
-    # huggingface_hub[hf_xet] fresh into an ephemeral uvx env every time.
+    # fetch_models.sh prefers this venv-local `hf` over `uvx`, so that a container start
+    # needs no PyPI round-trip and the CLI version is the one uv.lock pins (the script
+    # depends on `hf download --local-dir`'s exact on-disk layout). It's present because
+    # transformers -> huggingface_hub, which since 1.x requires hf-xet outright rather
+    # than behind the old `[hf_xet]` extra -- i.e. the Xet backend is already here. Assert
+    # it at build time so a future dependency change surfaces in CI, not at 3am in a pod.
+    && test -x /opt/venv/bin/hf \
+    && /opt/venv/bin/hf --version \
+    && /opt/venv/bin/python -c "import hf_xet" \
+    # Pre-warm uvx's tool cache anyway, for the fallback path on a checkout without a
+    # synced venv.
     && uvx --from 'huggingface_hub[hf_xet]' hf --version
 
 EXPOSE 8000

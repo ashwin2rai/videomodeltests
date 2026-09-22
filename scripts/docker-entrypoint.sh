@@ -20,7 +20,10 @@ update_repo() {
   echo "=== Updating videomodeltests from $(git remote get-url origin) ($(git rev-parse --abbrev-ref HEAD)) ==="
   local before_deps
   before_deps=$(git hash-object pyproject.toml uv.lock 2>/dev/null || true)
-  if git fetch --depth 1 origin && git reset --hard '@{upstream}' && git clean -fd; then
+  # -e .env: a .env written by hand inside a running container is untracked and NOT
+  # covered by .gitignore, so a plain `clean -fd` would silently delete the operator's
+  # HF_TOKEN on the next restart.
+  if git fetch --depth 1 origin && git reset --hard '@{upstream}' && git clean -fd -e .env; then
     echo "Now at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
     if [ "$before_deps" != "$(git hash-object pyproject.toml uv.lock 2>/dev/null || true)" ]; then
       echo "WARNING: pyproject.toml/uv.lock changed -- rebuild the image, the baked-in venv wasn't updated." >&2
@@ -30,21 +33,67 @@ update_repo() {
   fi
 }
 
+# Returns non-zero if anything the backend needs is missing. Every step reports its own
+# status explicitly rather than relying on `set -e`, which is suspended for the whole
+# call chain when a function runs inside an `if`.
 fetch_models() {
+  local ok=0
   echo "=== Fetching fixed stock models (Qwen encoder + video/audio VAEs) ==="
-  ./scripts/fetch_models.sh stock
+  if ! ./scripts/fetch_models.sh stock; then
+    echo "WARNING: stock model fetch failed." >&2
+    ok=1
+  fi
   if [ -n "${DIT_URL:-}" ]; then
     echo "=== Fetching DiT checkpoint from DIT_URL ==="
-    ./scripts/fetch_models.sh dit "$DIT_URL" "${DIT_NAME:-}"
+    if ! ./scripts/fetch_models.sh dit "$DIT_URL" "${DIT_NAME:-}"; then
+      echo "WARNING: DiT checkpoint fetch failed." >&2
+      ok=1
+    fi
   else
     echo "WARNING: DIT_URL not set -- no DiT checkpoint fetched. The UI will start but report" >&2
     echo "WARNING: no model found until one is fetched (set DIT_URL and restart, or run" >&2
     echo "WARNING: './scripts/fetch_models.sh dit <url>' by hand)." >&2
   fi
+  return $ok
+}
+
+# Points the server at the checkpoint the fetch just validated. Without this,
+# h3.discover_dit_checkpoint() globs diffusion_models/*.safetensors and refuses to guess
+# when there's more than one -- which is exactly what happens once a second DIT_URL is
+# fetched by hand into a running container.
+pin_model_path() {
+  local marker="${MODELS_ROOT:-${COMFYUI_ROOT:-/ComfyUI}/models}/diffusion_models/.active-dit"
+  if [ -n "${H3_MODEL_PATH:-}" ]; then
+    echo "Using H3_MODEL_PATH from the environment: $H3_MODEL_PATH"
+    return 0
+  fi
+  if [ -f "$marker" ]; then
+    local candidate
+    candidate=$(cat "$marker")
+    if [ -f "$candidate" ]; then
+      export H3_MODEL_PATH="$candidate"
+      echo "Pinned H3_MODEL_PATH=$H3_MODEL_PATH"
+    fi
+  fi
 }
 
 update_repo
-fetch_models
+if ! fetch_models; then
+  # Deliberately does NOT exit. RunPod restarts the container on any non-zero exit, and
+  # this image has no persistent volume, so exiting here turns one failed fetch into an
+  # endless restart loop that re-downloads tens of GB per iteration and never surfaces a
+  # readable error. The server starts regardless: web/server.py's _init_backend()
+  # catches the load failure and reports it on /api/status, the pod stays reachable, and
+  # the fetch can be retried from a shell without paying for another full download
+  # (fetch_models.sh now reuses whatever it already has).
+  echo "WARNING: ===================================================================" >&2
+  echo "WARNING: Model fetch incomplete -- starting the UI anyway so the pod stays up" >&2
+  echo "WARNING: and this log stays readable. The UI will report the backend error." >&2
+  echo "WARNING: Retry from a shell (it resumes/reuses, it doesn't start over):" >&2
+  echo "WARNING:   ./scripts/fetch_models.sh all \"\$DIT_URL\"" >&2
+  echo "WARNING: ===================================================================" >&2
+fi
+pin_model_path
 
 mode="${1:-serve}"
 case "$mode" in
