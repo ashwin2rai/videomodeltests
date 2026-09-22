@@ -58,7 +58,7 @@ RUN uv sync --frozen --no-dev --group gpu
 FROM python:3.12-slim-bookworm AS runtime
 
 RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates bash \
+    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates bash gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
