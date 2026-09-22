@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
-# Downloads the fixed "stock" supporting models (Qwen encoder + video/audio
-# VAEs) from the official Comfy-Org/MiniMax-H3 repo, and/or a user-supplied
-# DiT checkpoint from an arbitrary URL. Never bulk-clones the repo (it's
-# ~480GB; V1 only needs 3 specific files from it — see objective/status.md).
-#
-# Hugging Face-hosted sources are fetched with the official `hf` CLI (via
-# `uvx`, no project dependency needed) for resumable, integrity-checked
-# transfers, using the Rust-based hf-xet backend (huggingface_hub's default
-# transfer path for Xet-enabled repos, which Comfy-Org/MiniMax-H3 is) with
-# high-performance mode auto-enabled on boxes with enough RAM to back it —
-# see the `hf()`/`HF_XET_HIGH_PERFORMANCE` block below. Non-HF sources (e.g.
-# CivitAI) fall back to a plain curl download with a manual size check.
+# Downloads the fixed "stock" models (Qwen encoder + video/audio VAEs) from the official
+# Comfy-Org/MiniMax-H3 repo, and/or a user-supplied DiT checkpoint from an arbitrary URL.
+# Never bulk-clones the repo (~480GB; only 3 files are needed — see objective/status.md).
+# HF-hosted sources go through the official `hf` CLI (via `uvx`, no project dependency)
+# for resumable, integrity-checked transfers over the hf-xet backend. Non-HF sources
+# (e.g. CivitAI) fall back to plain curl with a manual size check.
 set -euo pipefail
 
 STOCK_REPO="Comfy-Org/MiniMax-H3"
@@ -19,8 +13,7 @@ HF_REPO_URL="https://huggingface.co/${STOCK_REPO}/resolve/main"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Auto-load .env (e.g. HF_TOKEN=...) if present, without overriding a value
-# already set explicitly in the environment (e.g. `HF_TOKEN=x make ...`).
+# Auto-load .env (e.g. HF_TOKEN=...), without overriding an already-exported value.
 if [ -f "$REPO_ROOT/.env" ]; then
   existing_hf_token="${HF_TOKEN:-}"
   set -a
@@ -30,18 +23,14 @@ if [ -f "$REPO_ROOT/.env" ]; then
   [ -n "$existing_hf_token" ] && HF_TOKEN="$existing_hf_token"
 fi
 
-# hf-xet's "high performance" mode saturates network bandwidth and all CPU
-# cores for parallel transfer — a real win for the tens-of-GB files this
-# script moves, but the docs call for ~64GB+ RAM to safely buffer at that
-# rate, so only auto-enable it on a box that has that much (the RunPod
-# target has ~92GB; a small dev machine wouldn't, but this script also isn't
-# meant to run there — see objective/objective.md). An explicit shell-level
-# or .env value always wins over this auto-detection.
-if [ -z "${HF_XET_HIGH_PERFORMANCE:-}" ]; then
-  mem_kb=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
-  if [ "${mem_kb:-0}" -ge $((64 * 1024 * 1024)) ]; then
-    HF_XET_HIGH_PERFORMANCE=1
-  fi
+# hf-xet's "high performance" mode saturates network+CPU for much faster transfer of
+# the tens-of-GB files this script moves, but needs ~64GB+ RAM to safely buffer at that
+# rate, so it's only auto-enabled above that (an explicit env/.env value always wins).
+# Note: /proc/meminfo inside a container may not match the host's if RunPod applies a
+# lower memory cgroup limit than the pod's advertised total.
+mem_kb=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+if [ -z "${HF_XET_HIGH_PERFORMANCE:-}" ] && [ "$mem_kb" -ge $((64 * 1024 * 1024)) ]; then
+  HF_XET_HIGH_PERFORMANCE=1
 fi
 export HF_XET_HIGH_PERFORMANCE
 
@@ -49,19 +38,13 @@ py() {
   ( cd "$REPO_ROOT" && uv run python3 -c "$1" )
 }
 
+# `[hf_xet]` pulls in the Rust-based Xet transfer backend; without it `hf` silently falls
+# back to plain HTTP. HF_TOKEN, if set, is picked up automatically from the environment.
 hf() {
-  # HF_TOKEN, if set, is picked up automatically by huggingface_hub from the
-  # environment — deliberately not passed as `--token <value>` here, since
-  # the CLI itself warns that leaks into shell history and process listings.
-  # `[hf_xet]` pulls in the Rust-based Xet transfer backend huggingface_hub
-  # uses by default for Xet-enabled repos — without it, `hf` falls back to
-  # plain HTTP and prints a "package not installed" warning on every call.
   uvx --from 'huggingface_hub[hf_xet]' hf "$@"
 }
 
-# Sets AUTH_HEADER to an Authorization header, but only when the target is
-# huggingface.co — never send the token anywhere else (e.g. a CivitAI URL in
-# the curl fallback path).
+# Sets AUTH_HEADER, but only for huggingface.co targets -- never leaked to e.g. CivitAI.
 auth_header_for() {
   AUTH_HEADER=""
   if [ -n "${HF_TOKEN:-}" ]; then
@@ -71,8 +54,7 @@ auth_header_for() {
   fi
 }
 
-# curl wrapper that attaches AUTH_HEADER (if any) via `-K -` (config on
-# stdin) rather than `-H` on the command line, so the token never appears in
+# curl wrapper that sends AUTH_HEADER (if any) via `-K -` so the token never appears in
 # `ps` output. The URL must be the last argument.
 curl_auth() {
   local url="${!#}"
@@ -87,11 +69,15 @@ curl_auth() {
 resolve_models_root() {
   MODELS_ROOT="${MODELS_ROOT:-$(py 'import h3; print(h3.MODELS_ROOT)')}"
   echo "INFO: using MODELS_ROOT=$MODELS_ROOT"
-  [ -n "${HF_TOKEN:-}" ] || echo "WARNING: no HF_TOKEN set — requests to huggingface.co will be unauthenticated (lower rate limits)."
-  if [ "${HF_XET_HIGH_PERFORMANCE:-0}" = "1" ]; then
-    echo "INFO: HF_XET_HIGH_PERFORMANCE=1 — hf-xet will use all CPU cores and try to saturate network bandwidth."
+  if [ -n "${HF_TOKEN:-}" ]; then
+    echo "INFO: HF_TOKEN is set — requests to huggingface.co will be authenticated (higher rate limits)."
   else
-    echo "INFO: HF_XET_HIGH_PERFORMANCE not set (this box has <64GB RAM, or you set it to a non-1 value) — using hf-xet's normal auto-tuned transfer speed."
+    echo "WARNING: no HF_TOKEN set — requests to huggingface.co will be unauthenticated (lower rate limits)."
+  fi
+  if [ "${HF_XET_HIGH_PERFORMANCE:-0}" = "1" ]; then
+    echo "INFO: HF_XET_HIGH_PERFORMANCE=1 (detected $((mem_kb / 1024 / 1024))GB RAM) — hf-xet will saturate CPU/bandwidth."
+  else
+    echo "INFO: HF_XET_HIGH_PERFORMANCE not enabled (detected $((mem_kb / 1024 / 1024))GB RAM, need >=64GB, or an explicit override) — using hf-xet's normal transfer speed."
   fi
 }
 
@@ -108,18 +94,18 @@ Environment:
   MODELS_ROOT   Root of the ComfyUI-style models folder (default: value of h3.MODELS_ROOT)
   HF_TOKEN      Optional Hugging Face access token, for authenticated requests
                 (higher rate limits, access to gated repos). Only ever sent to
-                huggingface.co — never forwarded to a non-HF URL. Can also be
-                set via a .env file in the repo root (auto-loaded if present).
+                huggingface.co. Can also be set via a .env file in the repo root.
   HF_XET_HIGH_PERFORMANCE
-                Optional. 1 saturates network+CPU for faster hf-xet transfers
-                (needs ~64GB+ RAM); auto-set to 1 when this box has that much
-                RAM, otherwise left to hf-xet's own auto-tuned default. Set to
-                0 to force it off regardless of detected RAM.
+                Optional. 1 saturates network+CPU for faster hf-xet transfers (needs
+                ~64GB+ RAM); auto-set to 1 when this box has that much RAM. Set to 0
+                to force it off regardless of detected RAM.
+  PROGRESS_INTERVAL_SECONDS
+                Optional. How often (in seconds) to log download progress (default: 15).
 EOF
 }
 
-# Prints "repo_id<TAB>revision<TAB>path" if $1 is a huggingface.co blob/resolve
-# URL, else prints nothing.
+# Prints "repo_id<TAB>revision<TAB>path" if $1 is a huggingface.co blob/resolve URL,
+# else prints nothing.
 parse_hf_url() {
   py "
 import re
@@ -143,6 +129,43 @@ check_disk_space() {
   fi
 }
 
+# Logs periodic, newline-terminated progress by polling bytes-on-disk, rather than
+# relying on hf/curl's own \r-animated bars -- those are invisible in anything that
+# doesn't emulate a terminal (RunPod's log panel, a piped/redirected log file, etc).
+log_progress_until_done() {
+  local target="$1" total_bytes="${2:-0}" pid="$3" interval="${PROGRESS_INTERVAL_SECONDS:-15}"
+  local done_bytes elapsed pct start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep "$interval"
+    kill -0 "$pid" 2>/dev/null || break
+    if [ -d "$target" ]; then
+      done_bytes=$(du -sb "$target" 2>/dev/null | awk '{print $1}') || true
+    else
+      done_bytes=$(stat -c%s "$target" 2>/dev/null) || true
+    fi
+    [ -n "${done_bytes:-}" ] || continue
+    elapsed=$((SECONDS - start))
+    if [ "${total_bytes:-0}" -gt 0 ]; then
+      pct=$((done_bytes * 100 / total_bytes))
+      [ "$pct" -gt 100 ] && pct=100  # du's block-rounding can overshoot right at the end
+      echo "  ...${elapsed}s: ${pct}% ($((done_bytes / 1024**2))MB / $((total_bytes / 1024**2))MB)"
+    else
+      echo "  ...${elapsed}s: $((done_bytes / 1024**2))MB downloaded so far"
+    fi
+  done
+}
+
+# Runs "$@" in the background with a progress monitor against $target ($total_bytes,
+# 0 if unknown), then waits for it and propagates its exit status.
+run_with_progress() {
+  local target="$1" total_bytes="$2" pid
+  shift 2
+  "$@" &
+  pid=$!
+  log_progress_until_done "$target" "$total_bytes" "$pid"
+  wait "$pid"
+}
+
 # Generic curl-based fallback for non-HF sources (e.g. CivitAI).
 curl_download() {
   local url="$1" dest="$2" size gb_msg
@@ -151,7 +174,7 @@ curl_download() {
   gb_msg="unknown size"
   [ -n "${size:-}" ] && gb_msg="$((size / 1024**3))GB"
   echo "Downloading $(basename "$dest") ($gb_msg) via curl..."
-  curl_auth -L -C - --fail --retry 3 -o "$dest" "$url"
+  run_with_progress "$dest" "${size:-0}" curl_auth -L -C - --fail --retry 3 -o "$dest" "$url"
 
   if [ -n "${size:-}" ]; then
     local actual
@@ -179,11 +202,10 @@ for p in (h3.QWEN_ENCODER_PATH, h3.VIDEO_VAE_PATH, h3.AUDIO_VAE_PATH):
   check_disk_space "$MODELS_ROOT" "$total_bytes"
 
   echo "Downloading 3 fixed files (~$((total_bytes / 1024**3))GB total) into $MODELS_ROOT..."
-  echo "(hf CLI shows little/no live progress when not attached to an interactive terminal —"
-  echo " this is normal, not a hang. Check with: du -sh $MODELS_ROOT in another shell.)"
   local t0=$SECONDS
   # shellcheck disable=SC2086
-  hf download "$STOCK_REPO" $rel_paths --local-dir "$MODELS_ROOT" --format human
+  run_with_progress "$MODELS_ROOT" "$total_bytes" \
+    hf download "$STOCK_REPO" $rel_paths --local-dir "$MODELS_ROOT" --format human
   echo "Done. (took $((SECONDS - t0))s)"
 }
 
@@ -193,17 +215,21 @@ fetch_dit() {
   hf_match=$(parse_hf_url "$url")
 
   if [ -n "$hf_match" ]; then
-    local repo_id revision path scratch_dir downloaded_path
+    local repo_id revision path scratch_dir downloaded_path expected_bytes
     IFS=$'\t' read -r repo_id revision path <<< "$hf_match"
     filename="${filename:-$(basename "$path")}"
     dest="$MODELS_ROOT/diffusion_models/$filename"
-
-    # check_disk_space creates the destination directory as a side effect.
-    check_disk_space "$MODELS_ROOT/diffusion_models" "$(remote_size_bytes "https://huggingface.co/$repo_id/resolve/$revision/$path" || true)"
+    expected_bytes=$(remote_size_bytes "https://huggingface.co/$repo_id/resolve/$revision/$path" || true)
+    check_disk_space "$MODELS_ROOT/diffusion_models" "${expected_bytes:-}"
 
     scratch_dir=$(mktemp -d)
     echo "Downloading $filename via hf ($repo_id, revision $revision)..."
-    downloaded_path=$(hf download "$repo_id" "$path" --revision "$revision" --local-dir "$scratch_dir" --quiet | tail -1)
+    run_with_progress "$scratch_dir" "${expected_bytes:-0}" \
+      hf download "$repo_id" "$path" --revision "$revision" --local-dir "$scratch_dir"
+    # scratch_dir is fresh and holds exactly this one download, so find it rather than
+    # parse it out of hf's own stdout (which may now carry progress output too).
+    downloaded_path=$(find "$scratch_dir" -type f | head -1)
+    [ -n "$downloaded_path" ] || { echo "Error: hf download reported success but no file was found in $scratch_dir" >&2; exit 1; }
     mv "$downloaded_path" "$dest"
     rm -rf "$scratch_dir"
   else
@@ -214,12 +240,8 @@ fetch_dit() {
   echo "Downloaded $filename in $((SECONDS - t0))s."
 
   echo "Validating $filename against h3.validate_checkpoint()..."
-  # Prints a one-line summary, not the raw dict -- for a real DiT checkpoint,
-  # `metadata` can be a multi-KB-per-tensor quantization blob (hundreds of layers),
-  # which previously made this the single least-readable line in the whole log
-  # (see objective/status.md's Docker debugging notes). h3.py's own logger already
-  # logs the same tensor_count/dtypes concisely; this mirrors that instead of
-  # dumping the full return value.
+  # One-line summary rather than the raw dict: `metadata` can be a multi-KB quantization
+  # blob per tensor (hundreds of layers) that would otherwise dominate the log.
   py "
 import h3
 info = h3.validate_checkpoint('$dest')
