@@ -110,6 +110,25 @@ def _list_dir(directory, extensions):
     return [p.name for p in files]
 
 
+def _secure_delete(path):
+    # Overwrite the file's contents before unlinking so the data isn't recoverable from
+    # the file itself (e.g. via undelete tools that scan for freed-but-intact blocks).
+    # This does not guarantee anything against wear-leveled SSD remapping or filesystem
+    # journaling/snapshots -- there is no portable way to defeat those from user space --
+    # but it's a meaningful improvement over a bare unlink() for the common case.
+    try:
+        length = path.stat().st_size
+        with open(path, "r+b", buffering=0) as f:
+            for _ in range(3):
+                f.seek(0)
+                f.write(os.urandom(length))
+                f.flush()
+                os.fsync(f.fileno())
+    except FileNotFoundError:
+        return
+    path.unlink(missing_ok=True)
+
+
 @app.get("/")
 def index():
     return send_from_directory(STATIC_DIR, "index.html")
@@ -204,6 +223,24 @@ def clear_queue():
         drained += 1
     logger.info("Cleared %d pending job(s) from the queue", drained)
     return jsonify({"drained": drained, "queue_length": job_queue.qsize()})
+
+
+@app.delete("/api/clear-all")
+def clear_all():
+    with state_lock:
+        busy = current_job is not None and current_job.get("status") == "running"
+    if busy:
+        return jsonify({"error": "Cannot clear files while a job is running"}), 409
+
+    removed = 0
+    for directory in (INPUTS_DIR, OUTPUTS_DIR):
+        for p in directory.iterdir():
+            if p.is_file():
+                _secure_delete(p)
+                removed += 1
+
+    logger.info("Securely cleared %d file(s) from inputs/ and outputs/", removed)
+    return jsonify({"removed": removed})
 
 
 @app.get("/api/status")

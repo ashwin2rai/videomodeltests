@@ -171,6 +171,13 @@
   .frame-controls input[type=range] { flex: 1; accent-color: var(--busy); }
   .frame-controls input[type=number] { width: 76px; flex: 0 0 auto; }
   .frame-hint { margin: 8px 0 0; font-size: 0.78rem; color: var(--muted); }
+
+  .danger-btn {
+    width: 100%; padding: 10px; font-size: 0.88rem;
+    background: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 9px;
+  }
+  .danger-btn:hover { background: rgba(229, 85, 95, 0.1); }
+  .danger-hint { margin: 8px 0 0; font-size: 0.78rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -298,6 +305,15 @@
       <p class="frame-hint" id="frame-hint">&mdash;</p>
       <button class="btn" id="save-frame-btn" style="margin-top: 10px; width: 100%;" disabled>Save frame to inputs/</button>
       <div class="field-error" id="frame-error"></div>
+    </details>
+  </section>
+
+  <section>
+    <details id="danger-zone">
+      <summary>Danger zone</summary>
+      <p class="danger-hint">Permanently and securely erases every file in <code>inputs/</code> and <code>outputs/</code>. This cannot be undone.</p>
+      <button class="danger-btn" id="clear-all-btn" style="margin-top: 10px;">Clear all inputs &amp; outputs</button>
+      <div class="field-error" id="clear-all-error"></div>
     </details>
   </section>
 </div>
@@ -579,6 +595,29 @@ document.getElementById('delete-queue-btn').addEventListener('click', async () =
     logLine(`Cleared ${result.drained} pending job(s)`);
   } catch (e) {
     errorEl.textContent = e.message;
+  }
+});
+
+document.getElementById('clear-all-btn').addEventListener('click', async () => {
+  const errorEl = document.getElementById('clear-all-error');
+  errorEl.textContent = '';
+  const confirmed = confirm(
+    'Permanently and securely delete ALL files in inputs/ and outputs/?\n\nThis cannot be undone.'
+  );
+  if (!confirmed) return;
+
+  try {
+    const result = await api('/api/clear-all', { method: 'DELETE' });
+    logLine(`Cleared all files (${result.removed} securely deleted)`);
+
+    lastNewestOutput = null;
+    loadVideo('');
+    loadFrameVideo('');
+    await refreshInputs();
+    await refreshOutputs();
+  } catch (e) {
+    errorEl.textContent = e.message;
+    logLine(`Clear all error: ${e.message}`);
   }
 });
 
