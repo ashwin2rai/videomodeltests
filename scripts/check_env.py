@@ -5,6 +5,7 @@ Run via `make check` (also runs at the end of `make setup`). Exits non-zero
 only for things that would actually block real generation — ffmpeg/ComfyUI
 presence are enforced earlier in the Makefile's dependency chain, not here.
 """
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -25,6 +26,16 @@ def report(label, passed, detail=""):
 report("ffmpeg", shutil.which("ffmpeg") is not None)
 report("ffprobe", shutil.which("ffprobe") is not None)
 report("ComfyUI checkout", Path(h3.COMFYUI_ROOT).is_dir(), h3.COMFYUI_ROOT)
+
+# Triton (pulled in by torch, and used by torch's own `_native` ops as well as any
+# custom int8/ConvRot kernels a DiT checkpoint ships) JIT-compiles a small C launcher
+# stub the first time a given kernel runs -- at inference time, not at process start,
+# so this would otherwise go unnoticed until partway through a real generation (see
+# objective/status.md). Check for a compiler the same way triton's own
+# `_find_compiler()` does: $CC first, then the same fallback list it tries.
+_cc_candidates = [os.environ.get("CC")] + ["cc", "gcc", "clang"]
+_cc_found = next((c for c in _cc_candidates if c and shutil.which(c)), None)
+report("C compiler (cc/gcc/clang, or $CC)", _cc_found is not None, _cc_found or "none found")
 
 try:
     import torch

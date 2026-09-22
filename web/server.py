@@ -10,6 +10,14 @@ from werkzeug.utils import secure_filename
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+# Must be set before torch initializes its CUDA allocator. Without this, real
+# generation reliably OOMs on a 32GB card from allocator fragmentation alone,
+# even when enough memory is technically free (see objective/status.md). This
+# mirrors generate.py's own setdefault -- the CLI isn't the only entry point
+# that needs it, and the container's entrypoint execs this file directly.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import h3  # noqa: E402
 
 logger = logging.getLogger(__name__)

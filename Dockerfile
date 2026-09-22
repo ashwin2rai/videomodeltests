@@ -14,9 +14,19 @@
 # No nvidia/cuda base image: the `gpu` dependency group's torch wheel already bundles
 # its own CUDA runtime, and RunPod's container runtime injects the host driver
 # (libcuda.so.1 etc.) regardless of base image. A plain python:slim base is lighter and
-# has nothing to duplicate. Revisit only if a future dependency needs nvcc/the CUDA
-# toolkit at build or run time (e.g. a SageAttention3 source build — see
+# has nothing to duplicate. Revisit only if a future dependency needs the full CUDA
+# toolkit (nvcc) at build or run time (e.g. a SageAttention3 source build — see
 # objective/status.md's "Performance research" notes, currently paused).
+#
+# Runtime stage DOES need a host C/C++ toolchain, though (see "Runtime build tools"
+# below) — this isn't a pure inference-only image. Triton (pulled in transitively by
+# torch, and used by torch's own `_native` ops as well as any custom int8/ConvRot
+# kernels a DiT checkpoint ships) JIT-compiles a small C launcher stub for every kernel
+# the *first time it runs* — at inference time, not at image build time — and that
+# needs a real `cc` in PATH. A minimal python:slim runtime image has none by default,
+# which surfaced as `RuntimeError: Failed to find C compiler` on the first real
+# generation through this image (gcc alone fixes that specific error; the fuller set
+# below is deliberately more than the observed minimum — see next comment).
 
 ########################
 # Stage 1: builder — anything needed to produce /opt/venv and the ComfyUI/app
@@ -57,8 +67,37 @@ RUN uv sync --frozen --no-dev --group gpu
 ########################
 FROM python:3.12-slim-bookworm AS runtime
 
+# Runtime build tools: deliberately more than the one confirmed failure (missing `cc`)
+# strictly requires, since every one of these is cheap (a few tens of MB combined,
+# irrelevant next to the ~20-66GB of model weights this image downloads on every
+# start) and each closes off a real, plausible failure mode of the exact same shape
+# — something that only bites at inference time, on a code path this repo doesn't
+# control end-to-end (ComfyUI internals, a third-party DiT checkpoint's custom
+# kernels, torch's own JIT paths) — rather than re-testing, hitting a new one, and
+# coming back for another round-trip:
+#   - build-essential: full gcc/g++/make/libc-dev toolchain, not just `gcc`. Triton
+#     (and torch's own `_native` op registry) only strictly needs a C compiler for its
+#     launcher-stub JIT, but g++/make cover any C++ extension a checkpoint's custom
+#     kernels or a future torch.compile/inductor cpp-backend path might need — same
+#     underlying "JIT-compiles at inference time" class of risk as the gcc bug already
+#     hit, just a superset of it.
+#   - python3-dev: guarantees Python.h/dev headers for whatever the above compiles
+#     against. python:slim usually already has these (built from source), but it's a
+#     few MB of insurance against that not holding on some future base image bump.
+#   - libgomp1: PyTorch's CPU kernels commonly dlopen the system libgomp on Debian —
+#     a classic "works on a full ML image, breaks on a minimal slim one" gap
+#     (`OSError: libgomp.so.1: cannot open shared object file`) that a plain
+#     python:slim base doesn't hit until the first real CPU-side tensor op needs it.
+#   - ninja-build: several PyTorch/Triton JIT and CUDA-extension build paths prefer
+#     ninja over make for parallel compilation; falls back gracefully if unused.
+#   - git: not needed by anything this repo currently does at *runtime* (only the
+#     builder stage clones anything) — kept for the `bash`/`check` debug entrypoint
+#     modes and because objective/status.md's paused SageAttention3 investigation
+#     would need to `git clone` a source build from inside a running container.
 RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates bash gcc \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg curl ca-certificates bash git \
+        build-essential python3-dev libgomp1 ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
