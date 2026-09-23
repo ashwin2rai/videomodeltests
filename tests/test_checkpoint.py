@@ -103,3 +103,22 @@ def test_h3_backend_generate_rejects_empty_prompt(tmp_path):
             prompt="   ",
             output_path=tmp_path / "out.mp4",
         )
+
+
+def test_validate_checkpoint_rejects_truncated_file(tmp_path):
+    path = tmp_path / "model.safetensors"
+    write_safetensors(path, h3_shaped_header(), data=b"\x00" * 3)
+    with pytest.raises(ValueError, match="truncated"):
+        h3.validate_checkpoint(path)
+
+
+def test_discover_dit_checkpoint_prefers_active_marker(tmp_path, monkeypatch):
+    monkeypatch.delenv("H3_MODEL_PATH", raising=False)
+    dit_dir = tmp_path / "diffusion_models"
+    dit_dir.mkdir()
+    (dit_dir / "a.safetensors").write_bytes(b"")
+    (dit_dir / "b.safetensors").write_bytes(b"")
+    with pytest.raises(ValueError, match="Found 2"):
+        h3.discover_dit_checkpoint(str(tmp_path))
+    (dit_dir / ".active-dit").write_text(f"{dit_dir / 'b.safetensors'}\n")
+    assert h3.discover_dit_checkpoint(str(tmp_path)) == str(dit_dir / "b.safetensors")

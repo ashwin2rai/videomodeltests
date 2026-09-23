@@ -193,6 +193,12 @@ def validate_checkpoint(path):
     if not header:
         raise ValueError(f"Checkpoint contains no tensors: {path}")
 
+    # The header records where every tensor's bytes end, so a download cut short is
+    # detectable here without knowing the remote file size.
+    expected_size = 8 + header_len + max(t.get("data_offsets", [0, 0])[1] for t in header.values())
+    if file_size < expected_size:
+        raise ValueError(f"Checkpoint is truncated ({file_size} of {expected_size} bytes): {path}")
+
     keys = header.keys()
     has_blocks = any(H3_BLOCK_KEY_RE.match(k) for k in keys)
     has_distinctive_key = not H3_DISTINCTIVE_KEYS.isdisjoint(keys)
@@ -233,6 +239,14 @@ def discover_dit_checkpoint(models_root=None):
         return path
 
     models_root = models_root or MODELS_ROOT
+    # scripts/fetch_models.sh records the checkpoint it last installed, so a second one
+    # fetched by hand doesn't make the choice ambiguous.
+    marker = Path(models_root, "diffusion_models", ".active-dit")
+    if marker.is_file() and Path(marker.read_text().strip()).is_file():
+        path = marker.read_text().strip()
+        logger.info("Using DiT checkpoint recorded in %s: %s", marker, path)
+        return path
+
     candidates = sorted(Path(models_root, "diffusion_models").glob("*.safetensors"))
     if len(candidates) == 1:
         logger.info("Auto-discovered DiT checkpoint: %s", candidates[0])
